@@ -6,9 +6,9 @@ import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 
 const themeOptions = [
+  { value: "system" as const, label: "Device", icon: Monitor },
   { value: "light" as const, label: "Light", icon: Sun },
   { value: "dark" as const, label: "Dark", icon: Moon },
-  { value: "system" as const, label: "Device", icon: Monitor },
 ];
 
 const scheduleOptions = [
@@ -33,7 +33,7 @@ export default function Settings() {
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">Your Cities</h2>
+        <h2 className="text-sm font-semibold text-foreground">Your Locations</h2>
         <p className="text-xs text-muted-foreground">
           Where do you wanna eat? Add your spots here.
         </p>
