@@ -74,7 +74,26 @@ export default function Settings() {
         <p className="text-xs text-muted-foreground">
           Choose your vibe — light, dark, or match your device.
         </p>
-        <ThemeSelector />
+        <div className="flex gap-2">
+          {themeOptions.map((opt) => {
+            const Icon = opt.icon;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => setTheme(opt.value)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  theme === opt.value
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section className="rounded-lg border border-border bg-secondary/50 p-4">
