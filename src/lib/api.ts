@@ -1,5 +1,3 @@
-import { supabase } from "@/integrations/supabase/client";
-
 export interface YelpRestaurant {
   id: string;
   name: string;
@@ -39,19 +37,11 @@ export async function discoverRestaurants(
     params.opened_since = openedSince;
   }
 
-  const { data, error } = await supabase.functions.invoke("discover-restaurants", {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-    body: undefined,
-  });
-
-  // supabase.functions.invoke doesn't support query params natively for GET,
-  // so we'll use fetch directly with the project URL
-  const projectId = import.meta.env.VITE_SUPABASE_URL?.replace("https://", "").split(".")[0];
   const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 
   const queryString = new URLSearchParams(params).toString();
-  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/discover-restaurants?${queryString}`;
+  const url = `${supabaseUrl}/functions/v1/discover-restaurants?${queryString}`;
 
   const response = await fetch(url, {
     headers: {
