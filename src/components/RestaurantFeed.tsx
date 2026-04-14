@@ -187,8 +187,18 @@ export function RestaurantFeed() {
     setLastChecked(new Date().toISOString());
   };
 
+  const { containerRef, pullDistance, refreshing: pullRefreshing, isPastThreshold } = usePullToRefresh({
+    onRefresh: handleRefresh,
+  });
+
   return (
-    <div className="space-y-4">
+    <div ref={containerRef} className="space-y-4 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch" }}>
+      <PullToRefreshIndicator
+        pullDistance={pullDistance}
+        refreshing={pullRefreshing}
+        isPastThreshold={isPastThreshold}
+      />
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-foreground">What Just Opened 🍽️</h1>
