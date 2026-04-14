@@ -28,7 +28,7 @@ export default function Settings() {
       <div>
         <h1 className="text-xl font-bold text-foreground">Settings ⚙️</h1>
         <p className="text-xs text-muted-foreground mt-1">
-          Pick your cities and we'll do the rest.
+          Pick your locations and we'll do the rest.
         </p>
       </div>
 
