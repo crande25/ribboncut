@@ -13,64 +13,78 @@ export function RestaurantFeed() {
   const [selectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [lastChecked, setLastChecked] = useLocalStorage<string>("last_checked", "");
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [usingMockData, setUsingMockData] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [cityOffsets, setCityOffsets] = useState<Record<string, number>>({});
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  const fetchFromApi = useCallback(async (cities: string[], since?: string) => {
+  const mapYelpToRestaurant = (r: any): Restaurant => ({
+    id: r.id,
+    name: r.name,
+    city: r.city,
+    imageUrl: r.imageUrl || r.photos?.[0] || "",
+    foodSummary: `${r.cuisine} • ${r.rating ? `${r.rating}★` : ""} ${r.reviewCount ? `(${r.reviewCount} reviews)` : ""}`.trim(),
+    atmosphereSummary: r.address || "",
+    openedDate: new Date().toISOString(),
+    cuisine: r.cuisine,
+    priceRange: r.priceRange,
+    rating: r.rating,
+    reviewCount: r.reviewCount,
+    address: r.address,
+    phone: r.phone,
+    url: r.url,
+    photos: r.photos,
+  });
+
+  const fetchPage = useCallback(async (cities: string[], offsets: Record<string, number>, since?: string) => {
     const allResults: Restaurant[] = [];
+    const newOffsets = { ...offsets };
+    let anyHasMore = false;
 
     for (const city of cities) {
+      const offset = offsets[city] ?? 0;
       try {
-        const response = await discoverRestaurants(city, 0, 50, since || undefined);
-        const mapped: Restaurant[] = response.restaurants.map((r) => ({
-          id: r.id,
-          name: r.name,
-          city: r.city,
-          imageUrl: r.imageUrl || r.photos?.[0] || "",
-          foodSummary: `${r.cuisine} • ${r.rating ? `${r.rating}★` : ""} ${r.reviewCount ? `(${r.reviewCount} reviews)` : ""}`.trim(),
-          atmosphereSummary: r.address || "",
-          openedDate: new Date().toISOString(), // Yelp doesn't provide opened date
-          cuisine: r.cuisine,
-          priceRange: r.priceRange,
-          rating: r.rating,
-          reviewCount: r.reviewCount,
-          address: r.address,
-          phone: r.phone,
-          url: r.url,
-          photos: r.photos,
-        }));
+        const response = await discoverRestaurants(city, offset, PAGE_SIZE, since || undefined);
+        const mapped = response.restaurants.map(mapYelpToRestaurant);
         allResults.push(...mapped);
+        newOffsets[city] = offset + response.restaurants.length;
+        if (offset + response.restaurants.length < response.total) {
+          anyHasMore = true;
+        }
       } catch (err) {
         console.error(`Failed to fetch restaurants for ${city}:`, err);
       }
     }
 
-    return allResults;
+    return { results: allResults, newOffsets, anyHasMore };
   }, []);
 
-  const fetchRestaurants = useCallback(async () => {
+  const fetchInitial = useCallback(async () => {
     setLoading(true);
-
     if (selectedCities.length === 0) {
       setRestaurants([]);
       setLoading(false);
+      setHasMore(false);
       return;
     }
 
+    const initialOffsets: Record<string, number> = {};
+    selectedCities.forEach(c => { initialOffsets[c] = 0; });
+
     try {
-      const results = await fetchFromApi(selectedCities, lastChecked || undefined);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, lastChecked || undefined);
       if (results.length > 0) {
-        results.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
         setRestaurants(results);
+        setCityOffsets(newOffsets);
+        setHasMore(anyHasMore);
         setUsingMockData(false);
       } else {
         throw new Error("No results from API");
       }
     } catch {
-      // Fallback to mock data
       console.log("Falling back to mock data");
       let filtered = mockRestaurants;
       if (selectedCities.length > 0) {
@@ -79,17 +93,55 @@ export function RestaurantFeed() {
       filtered.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
       setRestaurants(filtered);
       setUsingMockData(true);
+      setHasMore(false);
     }
 
-    setDisplayCount(PAGE_SIZE);
     setLoading(false);
     setLastChecked(new Date().toISOString());
-  }, [selectedCities, lastChecked, setLastChecked, fetchFromApi]);
+  }, [selectedCities, lastChecked, setLastChecked, fetchPage]);
 
   useEffect(() => {
-    fetchRestaurants();
+    fetchInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCities]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || usingMockData) return;
+    setLoadingMore(true);
+
+    try {
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, cityOffsets);
+      if (results.length > 0) {
+        setRestaurants(prev => {
+          const existingIds = new Set(prev.map(r => r.id));
+          const unique = results.filter(r => !existingIds.has(r.id));
+          return [...prev, ...unique];
+        });
+        setCityOffsets(newOffsets);
+      }
+      setHasMore(anyHasMore && results.length > 0);
+    } catch {
+      setHasMore(false);
+    }
+
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, usingMockData, selectedCities, cityOffsets, fetchPage]);
+
+  // Infinite scroll observer
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMore]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -101,11 +153,15 @@ export function RestaurantFeed() {
       return;
     }
 
+    const initialOffsets: Record<string, number> = {};
+    selectedCities.forEach(c => { initialOffsets[c] = 0; });
+
     try {
-      const results = await fetchFromApi(selectedCities);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets);
       if (results.length > 0) {
-        results.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
         setRestaurants(results);
+        setCityOffsets(newOffsets);
+        setHasMore(anyHasMore);
         setUsingMockData(false);
       } else {
         throw new Error("No results");
@@ -118,34 +174,16 @@ export function RestaurantFeed() {
       filtered.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
       setRestaurants(filtered);
       setUsingMockData(true);
+      setHasMore(false);
       toast({
         title: "Using demo data",
         description: "Could not reach the discovery API. Showing sample restaurants.",
       });
     }
 
-    setDisplayCount(PAGE_SIZE);
     setRefreshing(false);
     setLastChecked(new Date().toISOString());
   };
-
-  // Infinite scroll observer
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && displayCount < restaurants.length) {
-          setDisplayCount((c) => Math.min(c + PAGE_SIZE, restaurants.length));
-        }
-      },
-      { threshold: 0.1 }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [displayCount, restaurants.length]);
-
-  const visible = restaurants.slice(0, displayCount);
 
   return (
     <div className="space-y-4">
@@ -202,18 +240,22 @@ export function RestaurantFeed() {
           )}
 
           <div className="space-y-4">
-            {visible.map((r) => (
+            {restaurants.map((r) => (
               <RestaurantCard key={r.id} restaurant={r} />
             ))}
           </div>
 
-          {displayCount < restaurants.length && (
-            <div ref={sentinelRef} className="pull-indicator">
-              Loading more...
+          {hasMore && (
+            <div ref={sentinelRef} className="flex justify-center py-4">
+              {loadingMore ? (
+                <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+              ) : (
+                <span className="text-xs text-muted-foreground">Scroll for more</span>
+              )}
             </div>
           )}
 
-          {displayCount >= restaurants.length && restaurants.length > 0 && (
+          {!hasMore && restaurants.length > 0 && (
             <p className="text-center text-xs text-muted-foreground py-4">
               {restaurants.length} restaurant{restaurants.length !== 1 ? "s" : ""} found
             </p>
