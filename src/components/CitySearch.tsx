@@ -90,7 +90,7 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Type any city name and press Enter, or select from suggestions.
+        Search and tap to add a location.
       </p>
 
       {selectedCities.length > 0 && (
