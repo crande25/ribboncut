@@ -1,4 +1,4 @@
-import { UtensilsCrossed, Wind, Clock, DollarSign } from "lucide-react";
+import { UtensilsCrossed, Wind, Clock, DollarSign, Star, ExternalLink } from "lucide-react";
 import type { Restaurant } from "@/lib/mockData";
 
 function timeAgo(dateStr: string) {
@@ -27,12 +27,21 @@ export function RestaurantCard({ restaurant }: { restaurant: Restaurant }) {
       </div>
 
       <div className="space-y-3 p-4">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
           <span className="rounded-full bg-secondary px-2 py-0.5">{restaurant.cuisine}</span>
           <span className="flex items-center gap-0.5">
             <DollarSign className="h-3 w-3" />
             {restaurant.priceRange}
           </span>
+          {restaurant.rating && (
+            <span className="flex items-center gap-0.5">
+              <Star className="h-3 w-3 text-food" />
+              {restaurant.rating}
+              {restaurant.reviewCount && (
+                <span className="text-muted-foreground">({restaurant.reviewCount})</span>
+              )}
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-1">
             <Clock className="h-3 w-3" />
             {timeAgo(restaurant.openedDate)}
@@ -54,6 +63,18 @@ export function RestaurantCard({ restaurant }: { restaurant: Restaurant }) {
           </div>
           <p className="text-sm text-secondary-foreground">{restaurant.atmosphereSummary}</p>
         </div>
+
+        {restaurant.url && (
+          <a
+            href={restaurant.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+          >
+            <ExternalLink className="h-3 w-3" />
+            View on Yelp
+          </a>
+        )}
       </div>
     </article>
   );

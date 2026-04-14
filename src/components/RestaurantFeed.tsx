@@ -3,9 +3,11 @@ import { RefreshCw, MapPin } from "lucide-react";
 import { RestaurantCard } from "./RestaurantCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { mockRestaurants, type Restaurant } from "@/lib/mockData";
+import { discoverRestaurants } from "@/lib/api";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
+import { toast } from "@/hooks/use-toast";
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 20;
 
 export function RestaurantFeed() {
   const [selectedCities] = useLocalStorage<string[]>("selected_cities", []);
@@ -14,48 +16,117 @@ export function RestaurantFeed() {
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [usingMockData, setUsingMockData] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  const fetchRestaurants = useCallback(() => {
+  const fetchFromApi = useCallback(async (cities: string[], since?: string) => {
+    const allResults: Restaurant[] = [];
+
+    for (const city of cities) {
+      try {
+        const response = await discoverRestaurants(city, 0, 50, since || undefined);
+        const mapped: Restaurant[] = response.restaurants.map((r) => ({
+          id: r.id,
+          name: r.name,
+          city: r.city,
+          imageUrl: r.imageUrl || r.photos?.[0] || "",
+          foodSummary: `${r.cuisine} • ${r.rating ? `${r.rating}★` : ""} ${r.reviewCount ? `(${r.reviewCount} reviews)` : ""}`.trim(),
+          atmosphereSummary: r.address || "",
+          openedDate: new Date().toISOString(), // Yelp doesn't provide opened date
+          cuisine: r.cuisine,
+          priceRange: r.priceRange,
+          rating: r.rating,
+          reviewCount: r.reviewCount,
+          address: r.address,
+          phone: r.phone,
+          url: r.url,
+          photos: r.photos,
+        }));
+        allResults.push(...mapped);
+      } catch (err) {
+        console.error(`Failed to fetch restaurants for ${city}:`, err);
+      }
+    }
+
+    return allResults;
+  }, []);
+
+  const fetchRestaurants = useCallback(async () => {
     setLoading(true);
-    // Simulate API call with mock data
-    setTimeout(() => {
+
+    if (selectedCities.length === 0) {
+      setRestaurants([]);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const results = await fetchFromApi(selectedCities, lastChecked || undefined);
+      if (results.length > 0) {
+        results.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
+        setRestaurants(results);
+        setUsingMockData(false);
+      } else {
+        throw new Error("No results from API");
+      }
+    } catch {
+      // Fallback to mock data
+      console.log("Falling back to mock data");
       let filtered = mockRestaurants;
       if (selectedCities.length > 0) {
         filtered = filtered.filter((r) => selectedCities.includes(r.city));
       }
-      if (lastChecked) {
-        const since = new Date(lastChecked).getTime();
-        filtered = filtered.filter((r) => new Date(r.openedDate).getTime() >= since);
-      }
       filtered.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
       setRestaurants(filtered);
-      setDisplayCount(PAGE_SIZE);
-      setLoading(false);
-      setLastChecked(new Date().toISOString());
-    }, 800);
-  }, [selectedCities, lastChecked, setLastChecked]);
+      setUsingMockData(true);
+    }
+
+    setDisplayCount(PAGE_SIZE);
+    setLoading(false);
+    setLastChecked(new Date().toISOString());
+  }, [selectedCities, lastChecked, setLastChecked, fetchFromApi]);
 
   useEffect(() => {
     fetchRestaurants();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCities]);
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setRefreshing(true);
-    // Reset lastChecked to show all again on refresh
     setLastChecked("");
-    setTimeout(() => {
+
+    if (selectedCities.length === 0) {
+      setRestaurants([]);
+      setRefreshing(false);
+      return;
+    }
+
+    try {
+      const results = await fetchFromApi(selectedCities);
+      if (results.length > 0) {
+        results.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
+        setRestaurants(results);
+        setUsingMockData(false);
+      } else {
+        throw new Error("No results");
+      }
+    } catch {
       let filtered = mockRestaurants;
       if (selectedCities.length > 0) {
         filtered = filtered.filter((r) => selectedCities.includes(r.city));
       }
       filtered.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
       setRestaurants(filtered);
-      setDisplayCount(PAGE_SIZE);
-      setRefreshing(false);
-      setLastChecked(new Date().toISOString());
-    }, 600);
+      setUsingMockData(true);
+      toast({
+        title: "Using demo data",
+        description: "Could not reach the discovery API. Showing sample restaurants.",
+      });
+    }
+
+    setDisplayCount(PAGE_SIZE);
+    setRefreshing(false);
+    setLastChecked(new Date().toISOString());
   };
 
   // Infinite scroll observer
@@ -84,6 +155,7 @@ export function RestaurantFeed() {
           {lastChecked && (
             <p className="text-xs text-muted-foreground">
               Updated {new Date(lastChecked).toLocaleString()}
+              {usingMockData && " • Demo data"}
             </p>
           )}
         </div>
