@@ -6,6 +6,8 @@ import { mockRestaurants, type Restaurant } from "@/lib/mockData";
 import { discoverRestaurants } from "@/lib/api";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { toast } from "@/hooks/use-toast";
+import { usePullToRefresh } from "@/hooks/usePullToRefresh";
+import { PullToRefreshIndicator } from "./PullToRefreshIndicator";
 
 const PAGE_SIZE = 20;
 
