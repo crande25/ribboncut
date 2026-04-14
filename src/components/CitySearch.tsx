@@ -19,7 +19,7 @@ const citySuggestions = [
 
 interface CitySearchProps {
   selectedCities: string[];
-  onCitiesChange: (cities: string[]) => void;
+  onCitiesChange: (locations: string[]) => void;
 }
 
 export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) {

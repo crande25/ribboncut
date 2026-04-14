@@ -13,7 +13,7 @@
     --popover: 0 0% 100%;
     --popover-foreground: 220 15% 15%;
 
-    --primary: 25 90% 55%;
+    --primary: 205 80% 55%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 220 10% 92%;
@@ -22,53 +22,53 @@
     --muted: 220 10% 94%;
     --muted-foreground: 220 10% 45%;
 
-    --accent: 35 80% 50%;
-    --accent-foreground: 220 20% 7%;
+    --accent: 205 70% 48%;
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
     --border: 220 10% 88%;
     --input: 220 10% 88%;
-    --ring: 25 90% 55%;
+    --ring: 205 80% 55%;
 
     --radius: 0.75rem;
 
-    --food: 25 90% 55%;
+    --food: 205 80% 55%;
     --food-foreground: 0 0% 100%;
     --atmosphere: 260 60% 60%;
     --atmosphere-foreground: 260 10% 95%;
 
     --sidebar-background: 0 0% 100%;
     --sidebar-foreground: 220 15% 30%;
-    --sidebar-primary: 25 90% 55%;
+    --sidebar-primary: 205 80% 55%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 220 10% 92%;
     --sidebar-accent-foreground: 220 15% 30%;
     --sidebar-border: 220 10% 88%;
-    --sidebar-ring: 25 90% 55%;
+    --sidebar-ring: 205 80% 55%;
   }
 
   .dark {
     --background: 220 20% 7%;
-    --foreground: 30 10% 92%;
+    --foreground: 210 10% 92%;
 
     --card: 220 18% 10%;
-    --card-foreground: 30 10% 92%;
+    --card-foreground: 210 10% 92%;
 
     --popover: 220 18% 10%;
-    --popover-foreground: 30 10% 92%;
+    --popover-foreground: 210 10% 92%;
 
-    --primary: 25 90% 55%;
+    --primary: 205 80% 55%;
     --primary-foreground: 220 20% 7%;
 
     --secondary: 220 15% 16%;
-    --secondary-foreground: 30 10% 85%;
+    --secondary-foreground: 210 10% 85%;
 
     --muted: 220 15% 14%;
     --muted-foreground: 220 10% 55%;
 
-    --accent: 35 80% 50%;
+    --accent: 205 70% 48%;
     --accent-foreground: 220 20% 7%;
 
     --destructive: 0 84.2% 60.2%;
@@ -76,23 +76,23 @@
 
     --border: 220 15% 18%;
     --input: 220 15% 18%;
-    --ring: 25 90% 55%;
+    --ring: 205 80% 55%;
 
     --radius: 0.75rem;
 
-    --food: 25 90% 55%;
+    --food: 205 80% 55%;
     --food-foreground: 220 20% 7%;
     --atmosphere: 260 60% 60%;
     --atmosphere-foreground: 260 10% 95%;
 
     --sidebar-background: 220 18% 10%;
-    --sidebar-foreground: 30 10% 85%;
-    --sidebar-primary: 25 90% 55%;
+    --sidebar-foreground: 210 10% 85%;
+    --sidebar-primary: 205 80% 55%;
     --sidebar-primary-foreground: 220 20% 7%;
     --sidebar-accent: 220 15% 16%;
-    --sidebar-accent-foreground: 30 10% 85%;
+    --sidebar-accent-foreground: 210 10% 85%;
     --sidebar-border: 220 15% 18%;
-    --sidebar-ring: 25 90% 55%;
+    --sidebar-ring: 205 80% 55%;
   }
 }
 
