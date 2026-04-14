@@ -18,16 +18,16 @@ export default function Settings() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-xl font-bold text-foreground">Settings</h1>
+        <h1 className="text-xl font-bold text-foreground">Settings ⚙️</h1>
         <p className="text-xs text-muted-foreground mt-1">
-          Customize your restaurant discovery feed.
+          Pick your cities and we'll do the rest.
         </p>
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">Cities & Towns</h2>
+        <h2 className="text-sm font-semibold text-foreground">Your Cities</h2>
         <p className="text-xs text-muted-foreground">
-          Add any city or town to track new restaurant openings.
+          Where do you wanna eat? Add your spots here.
         </p>
         <CitySearch selectedCities={selectedCities} onCitiesChange={setSelectedCities} />
       </section>
@@ -38,7 +38,7 @@ export default function Settings() {
           <h2 className="text-sm font-semibold text-foreground">Notification Frequency</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          How often should we check for new openings? (Notifications coming soon)
+          How often should we ping you? (Coming soon!)
         </p>
         <div className="flex gap-2">
           {scheduleOptions.map((opt) => (

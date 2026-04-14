@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
 const tabs = [
-  { path: "/", label: "New Openings", icon: UtensilsCrossed },
+  { path: "/", label: "Feed", icon: UtensilsCrossed },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
