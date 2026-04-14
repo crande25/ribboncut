@@ -1,6 +1,6 @@
 {
-  "name": "Plattr — What Just Opened?",
-  "short_name": "Plattr",
+  "name": "PlatePing — What Just Opened?",
+  "short_name": "PlatePing",
   "description": "Find out what just opened near you",
   "start_url": "/",
   "display": "standalone",
