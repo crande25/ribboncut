@@ -1,8 +1,15 @@
-import { Bell } from "lucide-react";
+import { Bell, Sun, Moon, Monitor } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
+import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
+
+const themeOptions = [
+  { value: "light" as const, label: "Light", icon: Sun },
+  { value: "dark" as const, label: "Dark", icon: Moon },
+  { value: "system" as const, label: "Device", icon: Monitor },
+];
 
 const scheduleOptions = [
   { value: "daily", label: "Daily" },
@@ -14,6 +21,7 @@ export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
   const deviceId = useDeviceId();
+  const { theme, setTheme } = useTheme();
 
   return (
     <div className="space-y-8">
@@ -56,6 +64,17 @@ export default function Settings() {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Sun className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Appearance</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Choose your vibe — light, dark, or match your device.
+        </p>
+        <ThemeSelector />
       </section>
 
       <section className="rounded-lg border border-border bg-secondary/50 p-4">
