@@ -176,8 +176,8 @@ export function RestaurantFeed() {
       setUsingMockData(true);
       setHasMore(false);
       toast({
-        title: "Using demo data",
-        description: "Could not reach the discovery API. Showing sample restaurants.",
+        title: "Showing sample spots",
+        description: "Couldn't reach the live feed — here's some demo data for now.",
       });
     }
 
@@ -189,7 +189,7 @@ export function RestaurantFeed() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-foreground">New Openings</h1>
+          <h1 className="text-xl font-bold text-foreground">What Just Opened 🍽️</h1>
           {lastChecked && (
             <p className="text-xs text-muted-foreground">
               Updated {new Date(lastChecked).toLocaleString()}
@@ -210,9 +210,9 @@ export function RestaurantFeed() {
         <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-12 text-center">
           <MapPin className="h-10 w-10 text-muted-foreground" />
           <div>
-            <p className="text-sm font-medium text-foreground">No cities selected</p>
+            <p className="text-sm font-medium text-foreground">No cities yet!</p>
             <p className="text-xs text-muted-foreground">
-              Head to Settings and add cities to discover new restaurants.
+              Tap Settings and pick some cities to see what's new 🗺️
             </p>
           </div>
         </div>
@@ -234,8 +234,8 @@ export function RestaurantFeed() {
         <>
           {selectedCities.length > 0 && restaurants.length === 0 && (
             <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-12 text-center">
-              <p className="text-sm font-medium text-foreground">No new openings</p>
-              <p className="text-xs text-muted-foreground">Check back soon!</p>
+              <p className="text-sm font-medium text-foreground">Nothing new yet!</p>
+              <p className="text-xs text-muted-foreground">Check back soon — new spots pop up all the time 🤞</p>
             </div>
           )}
 

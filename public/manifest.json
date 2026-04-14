@@ -1,7 +1,7 @@
 {
-  "name": "Urban Eats — Restaurant Discovery",
-  "short_name": "Urban Eats",
-  "description": "Discover new restaurant openings in your city",
+  "name": "Plattr — What Just Opened?",
+  "short_name": "Plattr",
+  "description": "Find out what just opened near you",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0f",
