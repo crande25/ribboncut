@@ -8,6 +8,12 @@ export interface Restaurant {
   openedDate: string;
   cuisine: string;
   priceRange: string;
+  rating?: number;
+  reviewCount?: number;
+  address?: string;
+  phone?: string;
+  url?: string;
+  photos?: string[];
 }
 
 const now = Date.now();
