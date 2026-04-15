@@ -19,7 +19,7 @@ const openedWithinUnits = [
   { value: "months", label: "Months" },
 ];
 
-const maxValues: Record<string, number> = { days: 90, weeks: 12, months: 12 };
+const maxValues: Record<string, number> = { days: 365, weeks: 52, months: 12 };
 
 const themeOptions = [
   { value: "system" as const, label: "Device", icon: Smartphone },
