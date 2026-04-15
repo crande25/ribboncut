@@ -1,5 +1,3 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -24,54 +22,65 @@ Deno.serve(async (req) => {
       );
     }
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
     const url = new URL(req.url);
     const openedSince = url.searchParams.get("opened_since");
-    const citiesParam = url.searchParams.get("cities"); // comma-separated
+    const citiesParam = url.searchParams.get("cities");
     const offset = parseInt(url.searchParams.get("offset") || "0", 10);
     const limit = Math.min(parseInt(url.searchParams.get("limit") || "20", 10), 50);
-    const dietaryCategories = url.searchParams.get("categories"); // comma-separated
+    const dietaryCategories = url.searchParams.get("categories");
 
-    // Build query against our sightings table
-    let query = supabase
-      .from("restaurant_sightings")
-      .select("yelp_id, first_seen_at, city", { count: "exact" })
-      .order("first_seen_at", { ascending: false })
-      .range(offset, offset + limit - 1);
+    // Build PostgREST query
+    const filters: string[] = [];
+    filters.push(`select=yelp_id,first_seen_at,city`);
+    filters.push(`order=first_seen_at.desc`);
+    filters.push(`offset=${offset}`);
+    filters.push(`limit=${limit}`);
 
     if (openedSince) {
-      query = query.gte("first_seen_at", openedSince);
+      filters.push(`first_seen_at=gte.${openedSince}`);
     }
-
     if (citiesParam) {
       const cities = citiesParam.split(",").map((c) => c.trim());
-      query = query.in("city", cities);
+      filters.push(`city=in.(${cities.map((c) => `"${c}"`).join(",")})`);
     }
 
-    const { data: sightings, error: dbError, count } = await query;
+    const dbUrl = `${SUPABASE_URL}/rest/v1/restaurant_sightings?${filters.join("&")}`;
+    console.log("DB query URL:", dbUrl);
 
-    console.log("Query params:", { openedSince, citiesParam, offset, limit });
-    console.log("DB result:", { count, error: dbError?.message, rows: sightings?.length });
+    const dbRes = await fetch(dbUrl, {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "count=exact",
+      },
+    });
 
-    if (dbError) {
-      console.error("DB query error:", dbError.message);
+    if (!dbRes.ok) {
+      const errText = await dbRes.text();
+      console.error("PostgREST error:", dbRes.status, errText);
       return new Response(
         JSON.stringify({ error: "Database query failed" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
+    const contentRange = dbRes.headers.get("content-range");
+    const total = contentRange ? parseInt(contentRange.split("/")[1] || "0", 10) : 0;
+    const sightings = await dbRes.json();
+
+    console.log("DB result:", { total, rows: sightings.length });
+
     if (!sightings || sightings.length === 0) {
       return new Response(
-        JSON.stringify({ restaurants: [], total: count || 0, offset, limit }),
+        JSON.stringify({ restaurants: [], total, offset, limit }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // Fetch live Yelp details for each sighting
     const restaurants = await Promise.all(
-      sightings.map(async (sighting) => {
+      sightings.map(async (sighting: any) => {
         try {
           const detailRes = await fetch(
             `${YELP_API_URL}/businesses/${sighting.yelp_id}`,
@@ -90,7 +99,6 @@ Deno.serve(async (req) => {
 
           const biz = await detailRes.json();
 
-          // If dietary filter is set, check categories
           if (dietaryCategories) {
             const filters = dietaryCategories.split(",").map((c) => c.trim().toLowerCase());
             const bizCategories = (biz.categories || []).map((c: any) => c.alias.toLowerCase());
@@ -127,7 +135,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         restaurants: filtered,
-        total: count || 0,
+        total,
         offset,
         limit,
       }),
