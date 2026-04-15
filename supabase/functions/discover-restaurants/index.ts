@@ -47,20 +47,8 @@ Deno.serve(async (req) => {
       limit: String(limit),
       offset: String(offset),
       categories: baseCategories.join(","),
+      attributes: "hot_and_new",
     });
-
-    // Yelp's open_at only accepts timestamps within the last 2 weeks.
-    // If opened_since is older than that, we skip open_at and rely on default sorting.
-    if (openedSince) {
-      const sinceDate = new Date(openedSince);
-      const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-      if (sinceDate > twoWeeksAgo) {
-        const ts = Math.floor(sinceDate.getTime() / 1000);
-        params.set("open_at", String(ts));
-        // Remove sort_by when using open_at (Yelp API requirement)
-        params.delete("sort_by");
-      }
-    }
 
     const yelpResponse = await fetch(
       `${YELP_API_URL}/businesses/search?${params.toString()}`,
