@@ -3,7 +3,7 @@ import { RefreshCw, MapPin } from "lucide-react";
 import { RestaurantCard } from "./RestaurantCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { mockRestaurants, type Restaurant } from "@/lib/mockData";
-import { discoverRestaurants } from "@/lib/api";
+import { getRestaurants } from "@/lib/api";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { toast } from "@/hooks/use-toast";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
@@ -25,23 +25,24 @@ export function RestaurantFeed() {
     else now.setMonth(now.getMonth() - openedWithinValue);
     return now.toISOString();
   }, [openedWithinValue, openedWithinUnit]);
+
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [usingMockData, setUsingMockData] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [cityOffsets, setCityOffsets] = useState<Record<string, number>>({});
+  const [currentOffset, setCurrentOffset] = useState(0);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  const mapYelpToRestaurant = (r: any): Restaurant => ({
+  const mapToRestaurant = (r: any): Restaurant => ({
     id: r.id,
     name: r.name,
     city: r.city,
     imageUrl: r.imageUrl || r.photos?.[0] || "",
     foodSummary: `${r.cuisine} • ${r.rating ? `${r.rating}★` : ""} ${r.reviewCount ? `(${r.reviewCount} reviews)` : ""}`.trim(),
     atmosphereSummary: r.address || "",
-    openedDate: new Date().toISOString(),
+    openedDate: r.firstSeenAt || new Date().toISOString(),
     cuisine: r.cuisine,
     priceRange: r.priceRange,
     rating: r.rating,
@@ -52,28 +53,17 @@ export function RestaurantFeed() {
     photos: r.photos,
   });
 
-  const fetchPage = useCallback(async (cities: string[], offsets: Record<string, number>, since?: string, dietary?: string[]) => {
-    const allResults: Restaurant[] = [];
-    const newOffsets = { ...offsets };
-    let anyHasMore = false;
-
-    for (const city of cities) {
-      const offset = offsets[city] ?? 0;
-      try {
-        const response = await discoverRestaurants(city, offset, PAGE_SIZE, since || undefined, dietary);
-        const mapped = response.restaurants.map(mapYelpToRestaurant);
-        allResults.push(...mapped);
-        newOffsets[city] = offset + response.restaurants.length;
-        if (offset + response.restaurants.length < response.total) {
-          anyHasMore = true;
-        }
-      } catch (err) {
-        console.error(`Failed to fetch restaurants for ${city}:`, err);
-      }
-    }
-
-    return { results: allResults, newOffsets, anyHasMore };
-  }, []);
+  const fetchPage = useCallback(async (offset: number) => {
+    const response = await getRestaurants(
+      selectedCities,
+      offset,
+      PAGE_SIZE,
+      openedSince,
+      dietaryFilters.length > 0 ? dietaryFilters : undefined
+    );
+    const mapped = response.restaurants.map(mapToRestaurant);
+    return { results: mapped, total: response.total, hasMore: offset + mapped.length < response.total };
+  }, [selectedCities, dietaryFilters, openedSince]);
 
   const fetchInitial = useCallback(async () => {
     setLoading(true);
@@ -84,25 +74,23 @@ export function RestaurantFeed() {
       return;
     }
 
-    const initialOffsets: Record<string, number> = {};
-    selectedCities.forEach(c => { initialOffsets[c] = 0; });
-
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, openedSince, dietaryFilters);
+      const { results, hasMore: more } = await fetchPage(0);
       if (results.length > 0) {
         setRestaurants(results);
-        setCityOffsets(newOffsets);
-        setHasMore(anyHasMore);
+        setCurrentOffset(results.length);
+        setHasMore(more);
         setUsingMockData(false);
       } else {
-        throw new Error("No results from API");
+        setRestaurants([]);
+        setHasMore(false);
+        setUsingMockData(false);
       }
     } catch {
       console.log("Falling back to mock data");
-      let filtered = mockRestaurants;
-      if (selectedCities.length > 0) {
-        filtered = filtered.filter((r) => selectedCities.includes(r.city));
-      }
+      const filtered = mockRestaurants.filter((r) =>
+        selectedCities.some((c) => r.city.toLowerCase().includes(c.split(",")[0].toLowerCase()))
+      );
       filtered.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
       setRestaurants(filtered);
       setUsingMockData(true);
@@ -115,30 +103,29 @@ export function RestaurantFeed() {
 
   useEffect(() => {
     fetchInitial();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCities, dietaryFilters, openedSince]);
+  }, [fetchInitial]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || usingMockData) return;
     setLoadingMore(true);
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, cityOffsets, undefined, dietaryFilters);
+      const { results, hasMore: more } = await fetchPage(currentOffset);
       if (results.length > 0) {
-        setRestaurants(prev => {
-          const existingIds = new Set(prev.map(r => r.id));
-          const unique = results.filter(r => !existingIds.has(r.id));
+        setRestaurants((prev) => {
+          const existingIds = new Set(prev.map((r) => r.id));
+          const unique = results.filter((r) => !existingIds.has(r.id));
           return [...prev, ...unique];
         });
-        setCityOffsets(newOffsets);
+        setCurrentOffset((prev) => prev + results.length);
       }
-      setHasMore(anyHasMore && results.length > 0);
+      setHasMore(more && results.length > 0);
     } catch {
       setHasMore(false);
     }
 
     setLoadingMore(false);
-  }, [loadingMore, hasMore, usingMockData, selectedCities, dietaryFilters, cityOffsets, fetchPage]);
+  }, [loadingMore, hasMore, usingMockData, currentOffset, fetchPage]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -166,24 +153,21 @@ export function RestaurantFeed() {
       return;
     }
 
-    const initialOffsets: Record<string, number> = {};
-    selectedCities.forEach(c => { initialOffsets[c] = 0; });
-
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, openedSince, dietaryFilters);
+      const { results, hasMore: more } = await fetchPage(0);
       if (results.length > 0) {
         setRestaurants(results);
-        setCityOffsets(newOffsets);
-        setHasMore(anyHasMore);
+        setCurrentOffset(results.length);
+        setHasMore(more);
         setUsingMockData(false);
       } else {
-        throw new Error("No results");
+        setRestaurants([]);
+        setHasMore(false);
       }
     } catch {
-      let filtered = mockRestaurants;
-      if (selectedCities.length > 0) {
-        filtered = filtered.filter((r) => selectedCities.includes(r.city));
-      }
+      const filtered = mockRestaurants.filter((r) =>
+        selectedCities.some((c) => r.city.toLowerCase().includes(c.split(",")[0].toLowerCase()))
+      );
       filtered.sort((a, b) => new Date(b.openedDate).getTime() - new Date(a.openedDate).getTime());
       setRestaurants(filtered);
       setUsingMockData(true);
@@ -235,7 +219,7 @@ export function RestaurantFeed() {
           <div>
             <p className="text-sm font-medium text-foreground">No locations selected yet!</p>
             <p className="text-xs text-muted-foreground">
-              Tap Settings and add your favorite locations to get started ✨
+              Tap Settings and pick your SE Michigan areas to get started ✨
             </p>
           </div>
         </div>

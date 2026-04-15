@@ -1,5 +1,5 @@
 import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin } from "lucide-react";
-import { CitySearch } from "@/components/CitySearch";
+import { CityChecklist } from "@/components/CityChecklist";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
 import { useTheme } from "@/hooks/useTheme";
@@ -47,7 +47,7 @@ export default function Settings() {
       <div>
         <h1 className="text-xl font-bold text-foreground">Settings ⚙️</h1>
         <p className="text-xs text-muted-foreground mt-1">
-          Pick your locations and we'll do the rest.
+          Pick your SE Michigan locations and we'll do the rest.
         </p>
       </div>
 
@@ -57,9 +57,9 @@ export default function Settings() {
           <h2 className="text-sm font-semibold text-foreground">Your Locations</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          Where do you wanna eat? Add your spots here.
+          Select the SE Michigan areas you want to track.
         </p>
-        <CitySearch selectedCities={selectedCities} onCitiesChange={setSelectedCities} />
+        <CityChecklist selectedCities={selectedCities} onCitiesChange={setSelectedCities} />
       </section>
 
       <section className="space-y-3">
@@ -103,7 +103,7 @@ export default function Settings() {
           <h2 className="text-sm font-semibold text-foreground">Opened Within</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          Only show places that opened in the last…
+          Only show places first spotted in the last…
         </p>
         <div className="flex items-center gap-3">
           <input
