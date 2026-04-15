@@ -197,12 +197,6 @@ export function RestaurantFeed() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-foreground">What Just Opened 🍽️</h1>
-          {lastChecked && (
-            <p className="text-xs text-muted-foreground">
-              Updated {new Date(lastChecked).toLocaleString()}
-              {usingMockData && " • Demo data"}
-            </p>
-          )}
         </div>
         <button
           onClick={handleRefresh}
