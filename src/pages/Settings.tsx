@@ -1,4 +1,4 @@
-import { Bell, Sun, Moon, Monitor, Leaf, Calendar } from "lucide-react";
+import { Bell, Sun, Moon, Monitor, Leaf, Calendar, MapPin } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
@@ -52,7 +52,10 @@ export default function Settings() {
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">Your Locations</h2>
+        <div className="flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Your Locations</h2>
+        </div>
         <p className="text-xs text-muted-foreground">
           Where do you wanna eat? Add your spots here.
         </p>
@@ -113,7 +116,7 @@ export default function Settings() {
               const v = Math.max(1, Math.min(max, parseInt(e.target.value) || 1));
               setOpenedWithinValue(v);
             }}
-            className="w-16 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground text-center focus:outline-none focus:ring-2 focus:ring-primary"
+            className="w-16 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground text-center focus:outline-none focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
           />
           <div className="flex gap-2">
             {openedWithinUnits.map((opt) => (
