@@ -41,42 +41,22 @@ const SE_MICHIGAN_CITIES = [
 ];
 
 async function generateAtmosphereSummary(
-  yelpId: string,
   businessName: string,
   categories: string,
-  yelpApiKey: string,
+  price: string | null,
+  rating: number | null,
+  city: string,
   lovableApiKey: string,
 ): Promise<string | null> {
   try {
-    // Fetch reviews from Yelp
-    const reviewsRes = await fetch(
-      `${YELP_API_URL}/businesses/${yelpId}/reviews?limit=3&sort_by=yelp_sort`,
-      {
-        headers: {
-          Authorization: `Bearer ${yelpApiKey}`,
-          Accept: "application/json",
-        },
-      }
-    );
+    const details = [
+      `Restaurant: ${businessName}`,
+      `Categories: ${categories}`,
+      price ? `Price level: ${price}` : null,
+      rating ? `Rating: ${rating}/5` : null,
+      `Location: ${city}`,
+    ].filter(Boolean).join("\n");
 
-    if (!reviewsRes.ok) {
-      console.error(`Yelp reviews error for ${yelpId}: ${reviewsRes.status}`);
-      return null;
-    }
-
-    const reviewsData = await reviewsRes.json();
-    const reviews = reviewsData.reviews || [];
-
-    if (reviews.length === 0) {
-      return null;
-    }
-
-    const reviewSnippets = reviews
-      .map((r: any) => r.text?.slice(0, 300) || "")
-      .filter(Boolean)
-      .join("\n---\n");
-
-    // Call Lovable AI to generate atmosphere summary
     const aiRes = await fetch(AI_GATEWAY_URL, {
       method: "POST",
       headers: {
@@ -89,18 +69,18 @@ async function generateAtmosphereSummary(
           {
             role: "system",
             content:
-              "You describe restaurant vibes in one concise sentence. Focus on atmosphere, ambiance, crowd, decor, and energy. Never mention food quality or specific dishes. Be vivid but brief.",
+              "You describe restaurant vibes in one concise sentence. Based on the restaurant name, cuisine type, price level, and location, infer the likely atmosphere. Focus on ambiance, crowd, decor, and energy. Never mention food quality or specific dishes. Be vivid but brief.",
           },
           {
             role: "user",
-            content: `Restaurant: ${businessName} (${categories})\n\nReview snippets:\n${reviewSnippets}\n\nDescribe the vibe/atmosphere in one sentence.`,
+            content: `${details}\n\nDescribe the likely vibe/atmosphere in one sentence.`,
           },
         ],
       }),
     });
 
     if (!aiRes.ok) {
-      console.error(`AI gateway error for ${yelpId}: ${aiRes.status}`);
+      console.error(`AI gateway error for ${businessName}: ${aiRes.status}`);
       return null;
     }
 
@@ -108,7 +88,7 @@ async function generateAtmosphereSummary(
     const summary = aiData.choices?.[0]?.message?.content?.trim();
     return summary || null;
   } catch (err) {
-    console.error(`Error generating atmosphere for ${yelpId}:`, err);
+    console.error(`Error generating atmosphere for ${businessName}:`, err);
     return null;
   }
 }
