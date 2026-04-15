@@ -14,6 +14,20 @@ export const SE_MICHIGAN_CITIES = [
   "Warren, MI",
   "Sterling Heights, MI",
   "Rochester Hills, MI",
+  "Clinton Township, MI",
+  "Pontiac, MI",
+  "West Bloomfield, MI",
+  "Taylor, MI",
+  "Ferndale, MI",
+  "Ypsilanti, MI",
+  "Northville, MI",
+  "Grosse Pointe, MI",
+  "Bloomfield Hills, MI",
+  "Wyandotte, MI",
+  "Monroe, MI",
+  "Port Huron, MI",
+  "Shelby Township, MI",
+  "Waterford, MI",
 ] as const;
 
 export type SEMichiganCity = (typeof SE_MICHIGAN_CITIES)[number];
