@@ -233,9 +233,9 @@ export function RestaurantFeed() {
         <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-12 text-center">
           <MapPin className="h-10 w-10 text-muted-foreground" />
           <div>
-            <p className="text-sm font-medium text-foreground">No cities yet!</p>
+            <p className="text-sm font-medium text-foreground">No locations selected yet!</p>
             <p className="text-xs text-muted-foreground">
-              Tap Settings and pick some cities to see what's new 🗺️
+              Tap Settings and add your favorite locations to get started ✨
             </p>
           </div>
         </div>
