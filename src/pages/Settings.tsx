@@ -40,8 +40,15 @@ export default function Settings() {
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
+  const [rawInput, setRawInput] = useState<string>(String(openedWithinValue));
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
+
+  const currentMax = maxValues[openedWithinUnit] || 12;
+  const parsedRaw = parseInt(rawInput);
+  const validationError = isNaN(parsedRaw) || parsedRaw > currentMax
+    ? `Max is ${currentMax} ${openedWithinUnit}`
+    : null;
 
   return (
     <div className="space-y-8">
