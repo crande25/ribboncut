@@ -88,7 +88,7 @@ export function RestaurantFeed() {
     selectedCities.forEach(c => { initialOffsets[c] = 0; });
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, lastChecked || undefined, dietaryFilters);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, openedSince, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(results);
         setCityOffsets(newOffsets);
@@ -111,12 +111,12 @@ export function RestaurantFeed() {
 
     setLoading(false);
     setLastChecked(new Date().toISOString());
-  }, [selectedCities, dietaryFilters, lastChecked, setLastChecked, fetchPage]);
+  }, [selectedCities, dietaryFilters, openedSince, setLastChecked, fetchPage]);
 
   useEffect(() => {
     fetchInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCities, dietaryFilters]);
+  }, [selectedCities, dietaryFilters, openedSince]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || usingMockData) return;
