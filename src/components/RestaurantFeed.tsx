@@ -113,7 +113,7 @@ export function RestaurantFeed() {
     setLoadingMore(true);
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, cityOffsets, undefined, dietaryFilters);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, cityOffsets, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(prev => {
           const existingIds = new Set(prev.map(r => r.id));
@@ -160,7 +160,7 @@ export function RestaurantFeed() {
     selectedCities.forEach(c => { initialOffsets[c] = 0; });
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, openedSince, dietaryFilters);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(results);
         setCityOffsets(newOffsets);
