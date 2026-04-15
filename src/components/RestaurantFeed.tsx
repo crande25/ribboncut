@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { RefreshCw, MapPin } from "lucide-react";
 import { RestaurantCard } from "./RestaurantCard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,7 +14,17 @@ const PAGE_SIZE = 20;
 export function RestaurantFeed() {
   const [selectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
+  const [openedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
+  const [openedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [lastChecked, setLastChecked] = useLocalStorage<string>("last_checked", "");
+
+  const openedSince = useMemo(() => {
+    const now = new Date();
+    if (openedWithinUnit === "days") now.setDate(now.getDate() - openedWithinValue);
+    else if (openedWithinUnit === "weeks") now.setDate(now.getDate() - openedWithinValue * 7);
+    else now.setMonth(now.getMonth() - openedWithinValue);
+    return now.toISOString();
+  }, [openedWithinValue, openedWithinUnit]);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -78,7 +88,7 @@ export function RestaurantFeed() {
     selectedCities.forEach(c => { initialOffsets[c] = 0; });
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, lastChecked || undefined, dietaryFilters);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, openedSince, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(results);
         setCityOffsets(newOffsets);
@@ -101,12 +111,12 @@ export function RestaurantFeed() {
 
     setLoading(false);
     setLastChecked(new Date().toISOString());
-  }, [selectedCities, dietaryFilters, lastChecked, setLastChecked, fetchPage]);
+  }, [selectedCities, dietaryFilters, openedSince, setLastChecked, fetchPage]);
 
   useEffect(() => {
     fetchInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCities, dietaryFilters]);
+  }, [selectedCities, dietaryFilters, openedSince]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || usingMockData) return;
@@ -160,7 +170,7 @@ export function RestaurantFeed() {
     selectedCities.forEach(c => { initialOffsets[c] = 0; });
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, undefined, dietaryFilters);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, openedSince, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(results);
         setCityOffsets(newOffsets);

@@ -1,4 +1,4 @@
-import { Bell, Sun, Moon, Monitor, Leaf } from "lucide-react";
+import { Bell, Sun, Moon, Monitor, Leaf, Calendar } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
@@ -12,6 +12,14 @@ const dietaryOptions = [
   { value: "halal", label: "Halal" },
   { value: "kosher", label: "Kosher" },
 ];
+
+const openedWithinUnits = [
+  { value: "days", label: "Days" },
+  { value: "weeks", label: "Weeks" },
+  { value: "months", label: "Months" },
+];
+
+const maxValues: Record<string, number> = { days: 90, weeks: 12, months: 12 };
 
 const themeOptions = [
   { value: "system" as const, label: "Device", icon: Monitor },
@@ -28,6 +36,8 @@ const scheduleOptions = [
 export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
+  const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
+  const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
@@ -81,6 +91,50 @@ export default function Settings() {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Opened Within</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Only show places that opened in the last…
+        </p>
+        <div className="flex items-center gap-3">
+          <input
+            type="number"
+            min={1}
+            max={maxValues[openedWithinUnit] || 12}
+            value={openedWithinValue}
+            onChange={(e) => {
+              const max = maxValues[openedWithinUnit] || 12;
+              const v = Math.max(1, Math.min(max, parseInt(e.target.value) || 1));
+              setOpenedWithinValue(v);
+            }}
+            className="w-16 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground text-center focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+          <div className="flex gap-2">
+            {openedWithinUnits.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => {
+                  setOpenedWithinUnit(opt.value);
+                  const max = maxValues[opt.value] || 12;
+                  if (openedWithinValue > max) setOpenedWithinValue(max);
+                }}
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  openedWithinUnit === opt.value
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
