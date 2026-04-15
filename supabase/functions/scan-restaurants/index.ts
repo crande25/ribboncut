@@ -45,6 +45,17 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Accept optional city filter via body
+    let cityFilter: string[] | null = null;
+    if (req.method === "POST") {
+      try {
+        const body = await req.json();
+        if (body.cities && Array.isArray(body.cities)) {
+          cityFilter = body.cities;
+        }
+      } catch { /* no body, scan all */ }
+    }
+
     const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
