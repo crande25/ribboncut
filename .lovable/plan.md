@@ -1,44 +1,40 @@
 
 
-# Fix: Infinite API Request Loop on Feed Screen
+## Plan: Atmosphere Summaries at Scan Time
 
-## Problem
-The feed is firing 30+ identical API requests per second in an infinite loop. No "no results" message ever appears because the component never settles.
+### Overview
+Move atmosphere generation into the `scan-restaurants` edge function so summaries are pre-computed when restaurants are first discovered. The feed (`get-restaurants`) simply reads the cached value — zero extra latency at view time.
 
-## Root Cause
-`useLocalStorage` hook creates a new `setValue` function reference every time the stored value changes (because `storedValue` is in `useCallback`'s dependency array). In `RestaurantFeed`:
+### Database Change
+New `atmosphere_cache` table:
+- `yelp_id` (text, primary key)
+- `atmosphere_summary` (text, not null)
+- `created_at` (timestamptz, default now())
+- RLS: public SELECT, no client INSERT/UPDATE/DELETE
 
-1. `fetchInitial` runs and calls `setLastChecked(new Date().toISOString())` at line 101
-2. This updates `lastChecked`, which creates a new `setLastChecked` function reference
-3. `fetchInitial` has `setLastChecked` in its dependency array, so `useCallback` recreates it
-4. The `useEffect` at line 104 sees a new `fetchInitial` and re-runs it
-5. Go to step 1 -- infinite loop
+### Edge Function: `scan-restaurants/index.ts`
+After upserting a batch of restaurant sightings, for each new restaurant (not already in `atmosphere_cache`):
+1. Fetch Yelp reviews (`/v3/businesses/{yelp_id}/reviews`) — up to 3 snippets
+2. Send review text + restaurant name to Lovable AI (`google/gemini-2.5-flash-lite`) with a prompt like: *"In one sentence, describe the atmosphere/vibe of this restaurant based on these reviews."*
+3. Insert result into `atmosphere_cache`
 
-## Fix (two changes)
+This happens in the background scan — no user is waiting on it.
 
-### 1. Fix `useLocalStorage` hook (`src/hooks/useLocalStorage.ts`)
-Use a ref to hold `storedValue` so `setValue` has a stable identity:
+### Edge Function: `get-restaurants/index.ts`
+After fetching Yelp business details, join with `atmosphere_cache`:
+- Query `atmosphere_cache` for all `yelp_id`s in the current batch
+- Attach `atmosphere_summary` to each restaurant response object
+- Fallback: if no cached summary exists yet, derive a simple string from categories/price (e.g. "Upscale · Italian")
 
-```typescript
-const valueRef = useRef(storedValue);
-valueRef.current = storedValue;
+### Frontend Changes
+**`RestaurantCard.tsx`**: Replace `Wind` icon with `Sparkles` for the Atmosphere section.
 
-const setValue = useCallback(
-  (value: T | ((val: T) => T)) => {
-    const valueToStore = value instanceof Function ? value(valueRef.current) : value;
-    setStoredValue(valueToStore);
-    window.localStorage.setItem(key, JSON.stringify(valueToStore));
-  },
-  [key]  // no longer depends on storedValue
-);
-```
+**`RestaurantFeed.tsx`**: Map `r.atmosphereSummary` from the API response (already referenced in the card).
 
-This makes `setValue` stable across renders (only changes if `key` changes), matching `useState`'s `setState` behavior.
-
-### 2. Remove `setLastChecked` from `fetchInitial` deps (belt-and-suspenders)
-In `RestaurantFeed.tsx`, remove `setLastChecked` from the `fetchInitial` `useCallback` dependency array since it's only called for a side effect and shouldn't trigger re-fetching.
-
-### Files changed
-- `src/hooks/useLocalStorage.ts` -- stabilize `setValue` reference
-- `src/components/RestaurantFeed.tsx` -- clean up dependency array
+### Files Modified
+- New migration for `atmosphere_cache` table
+- `supabase/functions/scan-restaurants/index.ts` — add review fetch + AI summary + cache write
+- `supabase/functions/get-restaurants/index.ts` — read from `atmosphere_cache`, attach to response
+- `src/components/RestaurantCard.tsx` — icon swap (`Wind` to `Sparkles`)
+- `src/components/RestaurantFeed.tsx` — map `atmosphereSummary` field
 
