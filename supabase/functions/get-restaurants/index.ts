@@ -45,7 +45,6 @@ Deno.serve(async (req) => {
     }
 
     const dbUrl = `${SUPABASE_URL}/rest/v1/restaurant_sightings?${filters.join("&")}`;
-    console.log("DB query URL:", dbUrl);
 
     const dbRes = await fetch(dbUrl, {
       headers: {
@@ -68,8 +67,6 @@ Deno.serve(async (req) => {
     const contentRange = dbRes.headers.get("content-range");
     const total = contentRange ? parseInt(contentRange.split("/")[1] || "0", 10) : 0;
     const sightings = await dbRes.json();
-
-    console.log("DB result:", { total, rows: sightings.length });
 
     if (!sightings || sightings.length === 0) {
       return new Response(
