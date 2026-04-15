@@ -1,4 +1,4 @@
-export interface PlacesRestaurant {
+export interface YelpRestaurant {
   id: string;
   name: string;
   city: string;
@@ -11,25 +11,35 @@ export interface PlacesRestaurant {
   phone: string;
   url: string;
   photos: string[];
-  hours: string[];
+  hours: any[];
   coordinates?: { latitude: number; longitude: number };
-  openingDate: string | null;
 }
 
 export interface DiscoverResponse {
-  restaurants: PlacesRestaurant[];
+  restaurants: YelpRestaurant[];
   total: number;
-  nextPageToken?: string | null;
+  offset: number;
+  limit: number;
 }
 
 export async function discoverRestaurants(
   location: string,
+  offset = 0,
+  limit = 20,
   openedSince?: string,
-  pageToken?: string
+  dietaryFilters?: string[]
 ): Promise<DiscoverResponse> {
-  const params: Record<string, string> = { location };
-  if (openedSince) params.opened_since = openedSince;
-  if (pageToken) params.page_token = pageToken;
+  const params: Record<string, string> = {
+    location,
+    offset: String(offset),
+    limit: String(limit),
+  };
+  if (openedSince) {
+    params.opened_since = openedSince;
+  }
+  if (dietaryFilters && dietaryFilters.length > 0) {
+    params.categories = dietaryFilters.join(",");
+  }
 
   const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
