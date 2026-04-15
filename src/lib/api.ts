@@ -35,7 +35,7 @@ export async function getRestaurants(
     limit: String(limit),
   };
   if (cities.length > 0) {
-    params.cities = cities.join(",");
+    params.cities = cities.join("|");
   }
   if (openedSince) {
     params.opened_since = openedSince;

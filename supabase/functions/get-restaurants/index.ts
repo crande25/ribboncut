@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
       filters.push(`first_seen_at=gte.${openedSince}`);
     }
     if (citiesParam) {
-      const cities = citiesParam.split(",").map((c) => c.trim());
+      const cities = citiesParam.split("|").map((c) => c.trim());
       filters.push(`city=in.(${cities.map((c) => `"${c}"`).join(",")})`);
     }
 
