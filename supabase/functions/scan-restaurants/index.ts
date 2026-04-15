@@ -71,7 +71,9 @@ Deno.serve(async (req) => {
 
     const results: { city: string; newCount: number; total: number }[] = [];
 
-    for (const city of SE_MICHIGAN_CITIES) {
+    const citiesToScan = cityFilter || SE_MICHIGAN_CITIES;
+
+    for (const city of citiesToScan) {
       let offset = 0;
       let cityNewCount = 0;
       let cityTotal = 0;
