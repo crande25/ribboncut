@@ -76,6 +76,7 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
       async (pos) => {
         try {
           const { latitude, longitude } = pos.coords;
+          setDeviceCoords({ lat: latitude, lon: longitude });
           const res = await fetch(
             `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1`,
             { headers: { "Accept-Language": "en" } }
@@ -86,9 +87,7 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
           const state = addr.state || "";
           const label = [place, state].filter(Boolean).join(", ");
           if (label) {
-            setQuery(label);
-            setShowSuggestions(false);
-            inputRef.current?.focus();
+            addCity(label);
           }
         } catch {}
         setLocating(false);
