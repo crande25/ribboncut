@@ -116,7 +116,7 @@ export default function Settings() {
               const v = Math.max(1, Math.min(max, parseInt(e.target.value) || 1));
               setOpenedWithinValue(v);
             }}
-            className="w-16 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground text-center focus:outline-none focus:ring-2 focus:ring-primary"
+            className="w-16 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground text-center focus:outline-none focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
           />
           <div className="flex gap-2">
             {openedWithinUnits.map((opt) => (
