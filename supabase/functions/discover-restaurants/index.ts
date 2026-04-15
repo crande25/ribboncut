@@ -24,6 +24,7 @@ Deno.serve(async (req) => {
     const offset = parseInt(url.searchParams.get("offset") || "0", 10);
     const limit = Math.min(parseInt(url.searchParams.get("limit") || "20", 10), 50);
     const openedSince = url.searchParams.get("opened_since"); // ISO date string
+    const dietaryCategories = url.searchParams.get("categories"); // comma-separated dietary filters
 
     if (!location) {
       return new Response(
@@ -33,13 +34,19 @@ Deno.serve(async (req) => {
     }
 
     // Search for restaurants, sorted by newest
+    // Build categories: always include restaurants, plus any dietary filters
+    const baseCategories = ["restaurants"];
+    if (dietaryCategories) {
+      baseCategories.push(...dietaryCategories.split(",").map((c: string) => c.trim()));
+    }
+
     const params = new URLSearchParams({
       location,
       term: "restaurants",
       sort_by: "best_match",
       limit: String(limit),
       offset: String(offset),
-      categories: "restaurants,food",
+      categories: baseCategories.join(","),
     });
 
     // If opened_since is provided, use open_at to filter (Yelp uses unix timestamp)

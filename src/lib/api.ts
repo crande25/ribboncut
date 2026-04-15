@@ -26,7 +26,8 @@ export async function discoverRestaurants(
   location: string,
   offset = 0,
   limit = 20,
-  openedSince?: string
+  openedSince?: string,
+  dietaryFilters?: string[]
 ): Promise<DiscoverResponse> {
   const params: Record<string, string> = {
     location,
@@ -35,6 +36,9 @@ export async function discoverRestaurants(
   };
   if (openedSince) {
     params.opened_since = openedSince;
+  }
+  if (dietaryFilters && dietaryFilters.length > 0) {
+    params.categories = dietaryFilters.join(",");
   }
 
   const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
