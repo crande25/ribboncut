@@ -1,21 +1,7 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Search, X, MapPin, LocateFixed } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-
-// Common US cities for autocomplete suggestions — user can type anything
-const citySuggestions = [
-  "New York, NY", "Los Angeles, CA", "Chicago, IL", "Houston, TX",
-  "Phoenix, AZ", "Philadelphia, PA", "San Antonio, TX", "San Diego, CA",
-  "Dallas, TX", "San Francisco, CA", "Austin, TX", "Seattle, WA",
-  "Denver, CO", "Boston, MA", "Miami, FL", "Portland, OR",
-  "Atlanta, GA", "Nashville, TN", "Minneapolis, MN", "Detroit, MI",
-  "New Orleans, LA", "Charlotte, NC", "San Jose, CA", "Columbus, OH",
-  "Indianapolis, IN", "Jacksonville, FL", "Memphis, TN", "Baltimore, MD",
-  "Milwaukee, WI", "Albuquerque, NM", "Tucson, AZ", "Sacramento, CA",
-  "Kansas City, MO", "Las Vegas, NV", "Oklahoma City, OK", "Raleigh, NC",
-  "Louisville, KY", "Richmond, VA", "Salt Lake City, UT", "Pittsburgh, PA",
-];
 
 interface CitySearchProps {
   selectedCities: string[];
@@ -26,46 +12,62 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
   const [query, setQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lon: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const handleLocate = () => {
-    if (!navigator.geolocation) return;
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const { latitude, longitude } = pos.coords;
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1`,
-            { headers: { "Accept-Language": "en" } }
-          );
-          const data = await res.json();
-          const addr = data.address || {};
+  // Get device coords once for biasing results
+  useEffect(() => {
+    navigator.geolocation?.getCurrentPosition(
+      (pos) => setDeviceCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: false, timeout: 5000 }
+    );
+  }, []);
+
+  // Fetch suggestions from Nominatim as user types
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          q: trimmed,
+          format: "json",
+          addressdetails: "1",
+          limit: "6",
+          featuretype: "city",
+        });
+        if (deviceCoords) {
+          params.set("viewbox", `${deviceCoords.lon - 2},${deviceCoords.lat + 2},${deviceCoords.lon + 2},${deviceCoords.lat - 2}`);
+          params.set("bounded", "0");
+        }
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+          headers: { "Accept-Language": "en" },
+        });
+        const data = await res.json();
+        const labels: string[] = [];
+        for (const item of data) {
+          const addr = item.address || {};
           const place = addr.city || addr.town || addr.village || addr.hamlet || "";
           const state = addr.state || "";
           const label = [place, state].filter(Boolean).join(", ");
-          if (label) {
-            setQuery(label);
-            setShowSuggestions(false);
-            inputRef.current?.focus();
+          if (label && !labels.includes(label) && !selectedCities.includes(label)) {
+            labels.push(label);
           }
-        } catch {
-          // silently fail
         }
-        setLocating(false);
-      },
-      () => setLocating(false),
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
-
-  const filtered = query.trim()
-    ? citySuggestions.filter(
-        (c) =>
-          c.toLowerCase().includes(query.toLowerCase()) &&
-          !selectedCities.includes(c)
-      )
-    : [];
+        setSuggestions(labels);
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, deviceCoords, selectedCities]);
 
   const addCity = (city: string) => {
     const trimmed = city.trim();
