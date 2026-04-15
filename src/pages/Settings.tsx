@@ -63,6 +63,41 @@ export default function Settings() {
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Opened Within</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Only show restaurants that opened within this time period.
+        </p>
+        <div className="flex items-center gap-3">
+          <input
+            type="number"
+            min={1}
+            max={365}
+            value={openedWithinValue}
+            onChange={(e) => setOpenedWithinValue(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-16 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-foreground"
+          />
+          <div className="flex gap-2">
+            {unitOptions.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setOpenedWithinUnit(opt.value)}
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  openedWithinUnit === opt.value
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
           <Leaf className="h-4 w-4 text-primary" />
           <h2 className="text-sm font-semibold text-foreground">Dietary Requirements</h2>
         </div>
