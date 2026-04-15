@@ -211,15 +211,15 @@ export function RestaurantFeed() {
         <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-12 text-center">
           <MapPin className="h-10 w-10 text-muted-foreground" />
           <div>
-            <p className="text-sm font-medium text-foreground">No locations selected yet!</p>
+            <p className="text-sm font-medium text-foreground">Select at least one location</p>
             <p className="text-xs text-muted-foreground">
-              Tap Settings and pick your SE Michigan areas to get started ✨
+              Go to Settings and pick your SE Michigan areas to see new restaurants ✨
             </p>
           </div>
         </div>
       )}
 
-      {loading ? (
+      {loading && selectedCities.length > 0 ? (
         <div className="space-y-4">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="rounded-lg border border-border bg-card p-4 space-y-3">
