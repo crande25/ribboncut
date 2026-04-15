@@ -1,4 +1,4 @@
-import { Bell, Sun, Moon, Smartphone, Leaf, MapPin } from "lucide-react";
+import { Bell, Sun, Moon, Smartphone, Leaf, MapPin, Calendar } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
@@ -26,9 +26,17 @@ const scheduleOptions = [
   { value: "weekly", label: "Weekly" },
 ];
 
+const unitOptions = [
+  { value: "days", label: "Days" },
+  { value: "weeks", label: "Weeks" },
+  { value: "months", label: "Months" },
+];
+
 export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
+  const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 2);
+  const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "weeks");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
