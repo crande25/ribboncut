@@ -1,21 +1,7 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Search, X, MapPin, LocateFixed } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-
-// Common US cities for autocomplete suggestions — user can type anything
-const citySuggestions = [
-  "New York, NY", "Los Angeles, CA", "Chicago, IL", "Houston, TX",
-  "Phoenix, AZ", "Philadelphia, PA", "San Antonio, TX", "San Diego, CA",
-  "Dallas, TX", "San Francisco, CA", "Austin, TX", "Seattle, WA",
-  "Denver, CO", "Boston, MA", "Miami, FL", "Portland, OR",
-  "Atlanta, GA", "Nashville, TN", "Minneapolis, MN", "Detroit, MI",
-  "New Orleans, LA", "Charlotte, NC", "San Jose, CA", "Columbus, OH",
-  "Indianapolis, IN", "Jacksonville, FL", "Memphis, TN", "Baltimore, MD",
-  "Milwaukee, WI", "Albuquerque, NM", "Tucson, AZ", "Sacramento, CA",
-  "Kansas City, MO", "Las Vegas, NV", "Oklahoma City, OK", "Raleigh, NC",
-  "Louisville, KY", "Richmond, VA", "Salt Lake City, UT", "Pittsburgh, PA",
-];
 
 interface CitySearchProps {
   selectedCities: string[];
@@ -26,7 +12,62 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
   const [query, setQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lon: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Get device coords once for biasing results
+  useEffect(() => {
+    navigator.geolocation?.getCurrentPosition(
+      (pos) => setDeviceCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: false, timeout: 5000 }
+    );
+  }, []);
+
+  // Fetch suggestions from Nominatim as user types
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          q: trimmed,
+          format: "json",
+          addressdetails: "1",
+          limit: "6",
+          featuretype: "city",
+        });
+        if (deviceCoords) {
+          params.set("viewbox", `${deviceCoords.lon - 2},${deviceCoords.lat + 2},${deviceCoords.lon + 2},${deviceCoords.lat - 2}`);
+          params.set("bounded", "0");
+        }
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+          headers: { "Accept-Language": "en" },
+        });
+        const data = await res.json();
+        const labels: string[] = [];
+        for (const item of data) {
+          const addr = item.address || {};
+          const place = addr.city || addr.town || addr.village || addr.hamlet || "";
+          const state = addr.state || "";
+          const label = [place, state].filter(Boolean).join(", ");
+          if (label && !labels.includes(label) && !selectedCities.includes(label)) {
+            labels.push(label);
+          }
+        }
+        setSuggestions(labels);
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, deviceCoords, selectedCities]);
 
   const handleLocate = () => {
     if (!navigator.geolocation) return;
@@ -49,9 +90,7 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
             setShowSuggestions(false);
             inputRef.current?.focus();
           }
-        } catch {
-          // silently fail
-        }
+        } catch {}
         setLocating(false);
       },
       () => setLocating(false),
@@ -59,20 +98,13 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
     );
   };
 
-  const filtered = query.trim()
-    ? citySuggestions.filter(
-        (c) =>
-          c.toLowerCase().includes(query.toLowerCase()) &&
-          !selectedCities.includes(c)
-      )
-    : [];
-
   const addCity = (city: string) => {
     const trimmed = city.trim();
     if (trimmed && !selectedCities.includes(trimmed)) {
       onCitiesChange([...selectedCities, trimmed]);
     }
     setQuery("");
+    setSuggestions([]);
     setShowSuggestions(false);
     inputRef.current?.focus();
   };
@@ -114,9 +146,9 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
         >
           <LocateFixed className={cn("h-4 w-4", locating && "animate-pulse")} />
         </button>
-        {showSuggestions && filtered.length > 0 && (
+        {showSuggestions && suggestions.length > 0 && (
           <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
-            {filtered.map((city) => (
+            {suggestions.map((city) => (
               <button
                 key={city}
                 onMouseDown={() => addCity(city)}
