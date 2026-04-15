@@ -14,6 +14,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      atmosphere_cache: {
+        Row: {
+          atmosphere_summary: string
+          created_at: string
+          yelp_id: string
+        }
+        Insert: {
+          atmosphere_summary: string
+          created_at?: string
+          yelp_id: string
+        }
+        Update: {
+          atmosphere_summary?: string
+          created_at?: string
+          yelp_id?: string
+        }
+        Relationships: []
+      }
       restaurant_sightings: {
         Row: {
           city: string
