@@ -4,9 +4,9 @@ import type { Restaurant } from "@/lib/mockData";
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
   const days = Math.floor(diff / 86400000);
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  return `${days} days ago`;
+  if (days === 0) return "First spotted today";
+  if (days === 1) return "First spotted yesterday";
+  return `First spotted ${days} days ago`;
 }
 
 export function RestaurantCard({ restaurant }: { restaurant: Restaurant }) {
