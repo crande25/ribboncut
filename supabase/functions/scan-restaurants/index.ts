@@ -184,6 +184,9 @@ Deno.serve(async (req) => {
             yelp_id: biz.id,
             name: biz.name,
             categories: (biz.categories || []).map((c: any) => c.title).join(", "),
+            price: biz.price || null,
+            rating: biz.rating || null,
+            city,
           });
         }
 
