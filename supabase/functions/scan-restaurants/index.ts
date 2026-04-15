@@ -6,6 +6,7 @@ const corsHeaders = {
 };
 
 const YELP_API_URL = "https://api.yelp.com/v3";
+const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 const SE_MICHIGAN_CITIES = [
   "Detroit, MI",
@@ -39,13 +40,85 @@ const SE_MICHIGAN_CITIES = [
   "Waterford, MI",
 ];
 
+async function generateAtmosphereSummary(
+  yelpId: string,
+  businessName: string,
+  categories: string,
+  yelpApiKey: string,
+  lovableApiKey: string,
+): Promise<string | null> {
+  try {
+    // Fetch reviews from Yelp
+    const reviewsRes = await fetch(
+      `${YELP_API_URL}/businesses/${yelpId}/reviews?limit=3&sort_by=yelp_sort`,
+      {
+        headers: {
+          Authorization: `Bearer ${yelpApiKey}`,
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!reviewsRes.ok) {
+      console.error(`Yelp reviews error for ${yelpId}: ${reviewsRes.status}`);
+      return null;
+    }
+
+    const reviewsData = await reviewsRes.json();
+    const reviews = reviewsData.reviews || [];
+
+    if (reviews.length === 0) {
+      return null;
+    }
+
+    const reviewSnippets = reviews
+      .map((r: any) => r.text?.slice(0, 300) || "")
+      .filter(Boolean)
+      .join("\n---\n");
+
+    // Call Lovable AI to generate atmosphere summary
+    const aiRes = await fetch(AI_GATEWAY_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${lovableApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash-lite",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You describe restaurant vibes in one concise sentence. Focus on atmosphere, ambiance, crowd, decor, and energy. Never mention food quality or specific dishes. Be vivid but brief.",
+          },
+          {
+            role: "user",
+            content: `Restaurant: ${businessName} (${categories})\n\nReview snippets:\n${reviewSnippets}\n\nDescribe the vibe/atmosphere in one sentence.`,
+          },
+        ],
+      }),
+    });
+
+    if (!aiRes.ok) {
+      console.error(`AI gateway error for ${yelpId}: ${aiRes.status}`);
+      return null;
+    }
+
+    const aiData = await aiRes.json();
+    const summary = aiData.choices?.[0]?.message?.content?.trim();
+    return summary || null;
+  } catch (err) {
+    console.error(`Error generating atmosphere for ${yelpId}:`, err);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    // Accept optional city filter via body
     let cityFilter: string[] | null = null;
     if (req.method === "POST") {
       try {
@@ -59,6 +132,7 @@ Deno.serve(async (req) => {
     const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
     if (!YELP_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return new Response(
@@ -70,6 +144,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const results: { city: string; newCount: number; total: number }[] = [];
+    const newYelpIds: { yelp_id: string; name: string; categories: string }[] = [];
 
     const citiesToScan = cityFilter || SE_MICHIGAN_CITIES;
 
@@ -77,7 +152,7 @@ Deno.serve(async (req) => {
       let offset = 0;
       let cityNewCount = 0;
       let cityTotal = 0;
-      const maxResults = 200; // Yelp max offset is 1000, but keep reasonable
+      const maxResults = 200;
 
       while (offset < maxResults) {
         const params = new URLSearchParams({
@@ -109,7 +184,6 @@ Deno.serve(async (req) => {
 
         if (businesses.length === 0) break;
 
-        // Build sighting rows
         const rows = businesses.map((biz: any) => ({
           yelp_id: biz.id,
           city,
@@ -124,15 +198,21 @@ Deno.serve(async (req) => {
           console.error(`DB error for ${city}:`, error.message);
         }
 
-        // Count genuinely new ones (rows that didn't conflict)
-        // We can't know exactly from upsert, so we'll count after
+        // Track new businesses for atmosphere generation
+        for (const biz of businesses) {
+          newYelpIds.push({
+            yelp_id: biz.id,
+            name: biz.name,
+            categories: (biz.categories || []).map((c: any) => c.title).join(", "),
+          });
+        }
+
         cityTotal += businesses.length;
         offset += businesses.length;
 
         if (offset >= (data.total || 0)) break;
       }
 
-      // Count new sightings for this city (seen today)
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const { count } = await supabase
@@ -143,15 +223,60 @@ Deno.serve(async (req) => {
 
       cityNewCount = count || 0;
 
-      // Log the scan
       await supabase.from("scan_log").insert({
         city,
         new_count: cityNewCount,
       });
 
       results.push({ city, newCount: cityNewCount, total: cityTotal });
-
       console.log(`Scanned ${city}: ${cityTotal} businesses, ${cityNewCount} new today`);
+    }
+
+    // Generate atmosphere summaries for restaurants not yet cached
+    if (LOVABLE_API_KEY && newYelpIds.length > 0) {
+      // Deduplicate by yelp_id
+      const uniqueMap = new Map<string, { name: string; categories: string }>();
+      for (const item of newYelpIds) {
+        if (!uniqueMap.has(item.yelp_id)) {
+          uniqueMap.set(item.yelp_id, { name: item.name, categories: item.categories });
+        }
+      }
+      const uniqueIds = Array.from(uniqueMap.keys());
+
+      // Check which ones already have cached summaries
+      const { data: existing } = await supabase
+        .from("atmosphere_cache")
+        .select("yelp_id")
+        .in("yelp_id", uniqueIds);
+
+      const existingSet = new Set((existing || []).map((e: any) => e.yelp_id));
+      const uncached = uniqueIds.filter((id) => !existingSet.has(id));
+
+      console.log(`Generating atmosphere for ${uncached.length} new restaurants`);
+
+      for (const yelpId of uncached) {
+        const info = uniqueMap.get(yelpId)!;
+        const summary = await generateAtmosphereSummary(
+          yelpId,
+          info.name,
+          info.categories,
+          YELP_API_KEY,
+          LOVABLE_API_KEY,
+        );
+
+        if (summary) {
+          const { error: cacheError } = await supabase
+            .from("atmosphere_cache")
+            .upsert({ yelp_id: yelpId, atmosphere_summary: summary }, { onConflict: "yelp_id" });
+
+          if (cacheError) {
+            console.error(`Cache insert error for ${yelpId}:`, cacheError.message);
+          }
+        }
+
+        // Small delay to avoid rate limiting
+        await new Promise((r) => setTimeout(r, 200));
+      }
     }
 
     return new Response(
