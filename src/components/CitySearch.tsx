@@ -69,12 +69,42 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query, deviceCoords, selectedCities]);
 
+  const handleLocate = () => {
+    if (!navigator.geolocation) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1`,
+            { headers: { "Accept-Language": "en" } }
+          );
+          const data = await res.json();
+          const addr = data.address || {};
+          const place = addr.city || addr.town || addr.village || addr.hamlet || "";
+          const state = addr.state || "";
+          const label = [place, state].filter(Boolean).join(", ");
+          if (label) {
+            setQuery(label);
+            setShowSuggestions(false);
+            inputRef.current?.focus();
+          }
+        } catch {}
+        setLocating(false);
+      },
+      () => setLocating(false),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   const addCity = (city: string) => {
     const trimmed = city.trim();
     if (trimmed && !selectedCities.includes(trimmed)) {
       onCitiesChange([...selectedCities, trimmed]);
     }
     setQuery("");
+    setSuggestions([]);
     setShowSuggestions(false);
     inputRef.current?.focus();
   };
