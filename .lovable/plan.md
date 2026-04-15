@@ -1,40 +1,40 @@
 
 
-## Plan: Atmosphere Summaries at Scan Time
+## Plan: Google Places Reviews for Vibe Summaries
 
 ### Overview
-Move atmosphere generation into the `scan-restaurants` edge function so summaries are pre-computed when restaurants are first discovered. The feed (`get-restaurants`) simply reads the cached value — zero extra latency at view time.
+Update `scan-restaurants` to look up each uncached restaurant on Google Places via Text Search, fetch its reviews, and feed real review text to Lovable AI for a vibe summary. This replaces the current metadata-only inference with actual customer impressions.
 
-### Database Change
-New `atmosphere_cache` table:
-- `yelp_id` (text, primary key)
-- `atmosphere_summary` (text, not null)
-- `created_at` (timestamptz, default now())
-- RLS: public SELECT, no client INSERT/UPDATE/DELETE
+### How the mapping works
+For each restaurant without a cached atmosphere summary:
+1. **Google Places Text Search** — query `"{name}", {city}` to get a `place_id`
+2. **Google Places Details** — fetch `reviews` field using the `place_id` (up to 5 reviews returned)
+3. **AI summary** — send review snippets to `gemini-2.5-flash-lite` with the existing vibe prompt, now grounded in real customer language
+4. **Cache** — upsert result into `atmosphere_cache`
 
-### Edge Function: `scan-restaurants/index.ts`
-After upserting a batch of restaurant sightings, for each new restaurant (not already in `atmosphere_cache`):
-1. Fetch Yelp reviews (`/v3/businesses/{yelp_id}/reviews`) — up to 3 snippets
-2. Send review text + restaurant name to Lovable AI (`google/gemini-2.5-flash-lite`) with a prompt like: *"In one sentence, describe the atmosphere/vibe of this restaurant based on these reviews."*
-3. Insert result into `atmosphere_cache`
+If Google Places returns no match or no reviews, fall back to the current metadata-based inference (name + categories + price).
 
-This happens in the background scan — no user is waiting on it.
+### Changes to `scan-restaurants/index.ts`
 
-### Edge Function: `get-restaurants/index.ts`
-After fetching Yelp business details, join with `atmosphere_cache`:
-- Query `atmosphere_cache` for all `yelp_id`s in the current batch
-- Attach `atmosphere_summary` to each restaurant response object
-- Fallback: if no cached summary exists yet, derive a simple string from categories/price (e.g. "Upscale · Italian")
+1. **Add `GOOGLE_PLACES_API_KEY`** env var read (already configured as a secret)
+2. **New function `fetchGoogleReviews(name, city, apiKey)`**:
+   - Calls Google Places Text Search: `https://maps.googleapis.com/maps/api/place/textsearch/json?query={name}+{city}&type=restaurant&key=...`
+   - Takes the first result's `place_id`
+   - Calls Place Details: `https://maps.googleapis.com/maps/api/place/details/json?place_id=...&fields=reviews&key=...`
+   - Returns up to 5 review text strings, or empty array
+3. **Update `generateAtmosphereSummary`** — add a `reviewTexts: string[]` parameter. When reviews are available, include them in the AI prompt so the model summarizes actual customer impressions. When empty, fall back to current metadata-only prompt.
+4. **Update the atmosphere generation loop** — before calling AI, call `fetchGoogleReviews`. Pass results into the updated summary function.
+5. **Rate limiting** — increase delay between restaurants to ~300ms to stay within Google's QPS limits.
 
-### Frontend Changes
-**`RestaurantCard.tsx`**: Replace `Wind` icon with `Sparkles` for the Atmosphere section.
+### Cost
+- Each uncached restaurant = 2 Google API calls (Text Search + Details)
+- Covered by Google's $200/month free credit
+- Already-cached restaurants are skipped (no additional cost)
 
-**`RestaurantFeed.tsx`**: Map `r.atmosphereSummary` from the API response (already referenced in the card).
+### No other files change
+- `get-restaurants/index.ts` already reads from `atmosphere_cache` and attaches summaries — no changes needed
+- Frontend already displays `atmosphereSummary` — no changes needed
 
 ### Files Modified
-- New migration for `atmosphere_cache` table
-- `supabase/functions/scan-restaurants/index.ts` — add review fetch + AI summary + cache write
-- `supabase/functions/get-restaurants/index.ts` — read from `atmosphere_cache`, attach to response
-- `src/components/RestaurantCard.tsx` — icon swap (`Wind` to `Sparkles`)
-- `src/components/RestaurantFeed.tsx` — map `atmosphereSummary` field
+- `supabase/functions/scan-restaurants/index.ts` — add Google Places lookup + review-based AI prompts
 
