@@ -1,4 +1,4 @@
-import { Bell, Sun, Moon, Monitor, Leaf, Calendar } from "lucide-react";
+import { Bell, Sun, Moon, Monitor, Leaf, Calendar, MapPin } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
@@ -52,7 +52,10 @@ export default function Settings() {
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">Your Locations</h2>
+        <div className="flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Your Locations</h2>
+        </div>
         <p className="text-xs text-muted-foreground">
           Where do you wanna eat? Add your spots here.
         </p>

@@ -70,7 +70,7 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
           onFocus={() => setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
           onKeyDown={handleKeyDown}
-          placeholder="Search any city or town..."
+          placeholder="Search any location..."
           className="pl-9 bg-secondary border-border"
         />
         {showSuggestions && filtered.length > 0 && (
