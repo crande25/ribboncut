@@ -137,6 +137,10 @@ export default function Settings() {
           </div>
         </div>
       </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Bell className="h-4 w-4 text-primary" />
           <h2 className="text-sm font-semibold text-foreground">Notification Frequency</h2>
         </div>
         <p className="text-xs text-muted-foreground">
