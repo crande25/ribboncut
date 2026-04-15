@@ -133,7 +133,7 @@ Deno.serve(async (req) => {
     if (openedSince) {
       const sinceDate = new Date(openedSince);
       filtered = enriched.filter((p: any) => {
-        if (!p.openingDate) return false;
+        if (!p.openingDate) return true; // include if no date available
         const od = p.openingDate;
         // openingDate is { year, month, day }
         const openDate = new Date(od.year, (od.month || 1) - 1, od.day || 1);
