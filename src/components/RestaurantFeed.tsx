@@ -99,7 +99,7 @@ export function RestaurantFeed() {
 
     setLoading(false);
     setLastChecked(new Date().toISOString());
-  }, [selectedCities, dietaryFilters, openedSince, setLastChecked, fetchPage]);
+  }, [selectedCities, dietaryFilters, openedSince, fetchPage]);
 
   useEffect(() => {
     fetchInitial();
