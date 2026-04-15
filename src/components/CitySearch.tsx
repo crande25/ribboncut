@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Search, X, MapPin } from "lucide-react";
+import { Search, X, MapPin, LocateFixed } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +25,39 @@ interface CitySearchProps {
 export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) {
   const [query, setQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [locating, setLocating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleLocate = () => {
+    if (!navigator.geolocation) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1`,
+            { headers: { "Accept-Language": "en" } }
+          );
+          const data = await res.json();
+          const addr = data.address || {};
+          const place = addr.city || addr.town || addr.village || addr.hamlet || "";
+          const state = addr.state || "";
+          const label = [place, state].filter(Boolean).join(", ");
+          if (label) {
+            setQuery(label);
+            setShowSuggestions(false);
+            inputRef.current?.focus();
+          }
+        } catch {
+          // silently fail
+        }
+        setLocating(false);
+      },
+      () => setLocating(false),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   const filtered = query.trim()
     ? citySuggestions.filter(
@@ -71,8 +103,17 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
           onKeyDown={handleKeyDown}
           placeholder="Search any location..."
-          className="pl-9 bg-secondary border-border"
+          className="pl-9 pr-10 bg-secondary border-border"
         />
+        <button
+          type="button"
+          onClick={handleLocate}
+          disabled={locating}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+          aria-label="Use current location"
+        >
+          <LocateFixed className={cn("h-4 w-4", locating && "animate-pulse")} />
+        </button>
         {showSuggestions && filtered.length > 0 && (
           <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
             {filtered.map((city) => (
