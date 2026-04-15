@@ -51,6 +51,9 @@ Deno.serve(async (req) => {
 
     const { data: sightings, error: dbError, count } = await query;
 
+    console.log("Query params:", { openedSince, citiesParam, offset, limit });
+    console.log("DB result:", { count, error: dbError?.message, rows: sightings?.length });
+
     if (dbError) {
       console.error("DB query error:", dbError.message);
       return new Response(
