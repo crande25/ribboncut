@@ -23,7 +23,6 @@ Deno.serve(async (req) => {
     const location = url.searchParams.get("location");
     const offset = parseInt(url.searchParams.get("offset") || "0", 10);
     const limit = Math.min(parseInt(url.searchParams.get("limit") || "20", 10), 50);
-    const openedSince = url.searchParams.get("opened_since"); // ISO date string
     const dietaryCategories = url.searchParams.get("categories"); // comma-separated dietary filters
 
     if (!location) {
@@ -33,7 +32,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Search for restaurants, sorted by newest
     // Build categories: always include restaurants, plus any dietary filters
     const baseCategories = ["restaurants"];
     if (dietaryCategories) {
@@ -48,19 +46,6 @@ Deno.serve(async (req) => {
       offset: String(offset),
       categories: baseCategories.join(","),
     });
-
-    // Yelp's open_at only accepts timestamps within the last 2 weeks.
-    // If opened_since is older than that, we skip open_at and rely on default sorting.
-    if (openedSince) {
-      const sinceDate = new Date(openedSince);
-      const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-      if (sinceDate > twoWeeksAgo) {
-        const ts = Math.floor(sinceDate.getTime() / 1000);
-        params.set("open_at", String(ts));
-        // Remove sort_by when using open_at (Yelp API requirement)
-        params.delete("sort_by");
-      }
-    }
 
     const yelpResponse = await fetch(
       `${YELP_API_URL}/businesses/search?${params.toString()}`,

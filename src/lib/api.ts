@@ -26,7 +26,6 @@ export async function discoverRestaurants(
   location: string,
   offset = 0,
   limit = 20,
-  openedSince?: string,
   dietaryFilters?: string[]
 ): Promise<DiscoverResponse> {
   const params: Record<string, string> = {
@@ -34,9 +33,6 @@ export async function discoverRestaurants(
     offset: String(offset),
     limit: String(limit),
   };
-  if (openedSince) {
-    params.opened_since = openedSince;
-  }
   if (dietaryFilters && dietaryFilters.length > 0) {
     params.categories = dietaryFilters.join(",");
   }
