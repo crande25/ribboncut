@@ -1,9 +1,17 @@
-import { Bell, Sun, Moon, Monitor } from "lucide-react";
+import { Bell, Sun, Moon, Monitor, Leaf } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
 import { useTheme } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
+
+const dietaryOptions = [
+  { value: "vegan", label: "Vegan" },
+  { value: "vegetarian", label: "Vegetarian" },
+  { value: "gluten_free", label: "Gluten Free" },
+  { value: "halal", label: "Halal" },
+  { value: "kosher", label: "Kosher" },
+];
 
 const themeOptions = [
   { value: "system" as const, label: "Device", icon: Monitor },
@@ -19,6 +27,7 @@ const scheduleOptions = [
 
 export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
+  const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
@@ -38,6 +47,41 @@ export default function Settings() {
           Where do you wanna eat? Add your spots here.
         </p>
         <CitySearch selectedCities={selectedCities} onCitiesChange={setSelectedCities} />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Leaf className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Dietary Requirements</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Filter results to match your dietary needs.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {dietaryOptions.map((opt) => {
+            const isSelected = dietaryFilters.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                onClick={() =>
+                  setDietaryFilters((prev) =>
+                    isSelected
+                      ? prev.filter((v) => v !== opt.value)
+                      : [...prev, opt.value]
+                  )
+                }
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  isSelected
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section className="space-y-3">
