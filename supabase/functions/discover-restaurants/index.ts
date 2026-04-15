@@ -49,11 +49,13 @@ Deno.serve(async (req) => {
       categories: baseCategories.join(","),
     });
 
-    // If opened_since is provided, use open_at to filter (Yelp uses unix timestamp)
+    // Yelp doesn't have an "opened after" filter, so we pass open_at
+    // to bias results toward businesses open at that time, and can filter client-side
     if (openedSince) {
       const ts = Math.floor(new Date(openedSince).getTime() / 1000);
-      // Yelp doesn't have "opened after" filter directly,
-      // but we filter client-side or use attributes
+      params.set("open_at", String(ts));
+      // Remove sort_by when using open_at (Yelp API requirement)
+      params.delete("sort_by");
     }
 
     const yelpResponse = await fetch(
