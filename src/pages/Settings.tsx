@@ -23,7 +23,7 @@ const openedWithinUnits = [
 const maxValues: Record<string, number> = { days: 365, weeks: 52, months: 12 };
 
 const themeOptions = [
-  { value: "system" as const, label: "Device", icon: Smartphone },
+  { value: "system" as const, label: "Device Default", icon: Smartphone },
   { value: "light" as const, label: "Light", icon: Sun },
   { value: "dark" as const, label: "Dark", icon: Moon },
 ];
