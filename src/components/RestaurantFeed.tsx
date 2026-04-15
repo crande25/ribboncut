@@ -13,6 +13,7 @@ const PAGE_SIZE = 20;
 
 export function RestaurantFeed() {
   const [selectedCities] = useLocalStorage<string[]>("selected_cities", []);
+  const [dietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
   const [lastChecked, setLastChecked] = useLocalStorage<string>("last_checked", "");
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +42,7 @@ export function RestaurantFeed() {
     photos: r.photos,
   });
 
-  const fetchPage = useCallback(async (cities: string[], offsets: Record<string, number>, since?: string) => {
+  const fetchPage = useCallback(async (cities: string[], offsets: Record<string, number>, since?: string, dietary?: string[]) => {
     const allResults: Restaurant[] = [];
     const newOffsets = { ...offsets };
     let anyHasMore = false;
@@ -49,7 +50,7 @@ export function RestaurantFeed() {
     for (const city of cities) {
       const offset = offsets[city] ?? 0;
       try {
-        const response = await discoverRestaurants(city, offset, PAGE_SIZE, since || undefined);
+        const response = await discoverRestaurants(city, offset, PAGE_SIZE, since || undefined, dietary);
         const mapped = response.restaurants.map(mapYelpToRestaurant);
         allResults.push(...mapped);
         newOffsets[city] = offset + response.restaurants.length;
@@ -77,7 +78,7 @@ export function RestaurantFeed() {
     selectedCities.forEach(c => { initialOffsets[c] = 0; });
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, lastChecked || undefined);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, lastChecked || undefined, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(results);
         setCityOffsets(newOffsets);
@@ -100,19 +101,19 @@ export function RestaurantFeed() {
 
     setLoading(false);
     setLastChecked(new Date().toISOString());
-  }, [selectedCities, lastChecked, setLastChecked, fetchPage]);
+  }, [selectedCities, dietaryFilters, lastChecked, setLastChecked, fetchPage]);
 
   useEffect(() => {
     fetchInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCities]);
+  }, [selectedCities, dietaryFilters]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || usingMockData) return;
     setLoadingMore(true);
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, cityOffsets);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, cityOffsets, undefined, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(prev => {
           const existingIds = new Set(prev.map(r => r.id));
@@ -127,7 +128,7 @@ export function RestaurantFeed() {
     }
 
     setLoadingMore(false);
-  }, [loadingMore, hasMore, usingMockData, selectedCities, cityOffsets, fetchPage]);
+  }, [loadingMore, hasMore, usingMockData, selectedCities, dietaryFilters, cityOffsets, fetchPage]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -159,7 +160,7 @@ export function RestaurantFeed() {
     selectedCities.forEach(c => { initialOffsets[c] = 0; });
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, undefined, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(results);
         setCityOffsets(newOffsets);
