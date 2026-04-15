@@ -1,4 +1,4 @@
-import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin } from "lucide-react";
+import { Bell, Sun, Moon, Smartphone, Leaf, MapPin } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
