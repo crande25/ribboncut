@@ -219,7 +219,7 @@ export function RestaurantFeed() {
         </div>
       )}
 
-      {loading ? (
+      {loading && selectedCities.length > 0 ? (
         <div className="space-y-4">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="rounded-lg border border-border bg-card p-4 space-y-3">
