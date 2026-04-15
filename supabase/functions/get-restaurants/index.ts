@@ -36,6 +36,9 @@ Deno.serve(async (req) => {
     filters.push(`offset=${offset}`);
     filters.push(`limit=${limit}`);
 
+    // Exclude restaurants with future first_seen_at
+    filters.push(`first_seen_at=lte.${new Date().toISOString()}`);
+
     if (openedSince) {
       filters.push(`first_seen_at=gte.${openedSince}`);
     }
