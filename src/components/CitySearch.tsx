@@ -146,9 +146,9 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
         >
           <LocateFixed className={cn("h-4 w-4", locating && "animate-pulse")} />
         </button>
-        {showSuggestions && filtered.length > 0 && (
+        {showSuggestions && suggestions.length > 0 && (
           <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
-            {filtered.map((city) => (
+            {suggestions.map((city) => (
               <button
                 key={city}
                 onMouseDown={() => addCity(city)}
