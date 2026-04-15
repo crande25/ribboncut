@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const results: { city: string; newCount: number; total: number }[] = [];
-    const newYelpIds: { yelp_id: string; name: string; categories: string }[] = [];
+    const newYelpIds: { yelp_id: string; name: string; categories: string; price: string | null; rating: number | null; city: string }[] = [];
 
     const citiesToScan = cityFilter || SE_MICHIGAN_CITIES;
 
