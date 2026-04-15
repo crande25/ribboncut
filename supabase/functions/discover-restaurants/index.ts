@@ -102,8 +102,9 @@ Deno.serve(async (req) => {
     const places = data.places || [];
     const nextPageToken = data.nextPageToken || null;
 
+    console.log(`Found ${places.length} places from search`);
+
     // Now fetch detail for each place to get openingDate (requires individual lookup)
-    // openingDate is not returned in searchText, so we need details
     const enriched = await Promise.all(
       places.map(async (place: any) => {
         const placeId = place.id;
@@ -119,7 +120,10 @@ Deno.serve(async (req) => {
           );
           if (detailRes.ok) {
             const detail = await detailRes.json();
+            console.log(`Place ${placeId} openingDate:`, JSON.stringify(detail.openingDate));
             return { ...place, openingDate: detail.openingDate || null };
+          } else {
+            console.log(`Detail request failed for ${placeId}: ${detailRes.status}`);
           }
         } catch (e) {
           console.error(`Failed to get detail for ${placeId}:`, e);
@@ -128,17 +132,20 @@ Deno.serve(async (req) => {
       })
     );
 
+    const withDate = enriched.filter((p: any) => p.openingDate);
+    console.log(`${withDate.length}/${enriched.length} have openingDate`);
+
     // Filter by openingDate if opened_since is provided
     let filtered = enriched;
     if (openedSince) {
       const sinceDate = new Date(openedSince);
       filtered = enriched.filter((p: any) => {
-        if (!p.openingDate) return false;
+        if (!p.openingDate) return true; // include if no date available
         const od = p.openingDate;
-        // openingDate is { year, month, day }
         const openDate = new Date(od.year, (od.month || 1) - 1, od.day || 1);
         return openDate >= sinceDate;
       });
+      console.log(`After filtering by ${openedSince}: ${filtered.length} remain`);
     }
 
     // Map to our format
