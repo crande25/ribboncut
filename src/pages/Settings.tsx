@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin } from "lucide-react";
 import { CityChecklist } from "@/components/CityChecklist";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
@@ -39,8 +40,15 @@ export default function Settings() {
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
+  const [rawInput, setRawInput] = useState<string>(String(openedWithinValue));
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
+
+  const currentMax = maxValues[openedWithinUnit] || 12;
+  const parsedRaw = parseInt(rawInput);
+  const validationError = isNaN(parsedRaw) || parsedRaw > currentMax
+    ? `Max is ${currentMax} ${openedWithinUnit}`
+    : null;
 
   return (
     <div className="space-y-8">
@@ -105,39 +113,57 @@ export default function Settings() {
         <p className="text-xs text-muted-foreground">
           Only show places first spotted in the last…
         </p>
-        <div className="flex items-center gap-3">
-          <input
-            type="number"
-            min={1}
-            max={maxValues[openedWithinUnit] || 12}
-            value={openedWithinValue}
-            onChange={(e) => {
-              const max = maxValues[openedWithinUnit] || 12;
-              const v = Math.max(1, Math.min(max, parseInt(e.target.value) || 1));
-              setOpenedWithinValue(v);
-            }}
-            className="w-16 rounded-lg border border-border bg-secondary px-3 py-2 text-xs text-foreground text-center focus:outline-none focus:ring-2 focus:ring-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-          />
-          <div className="flex gap-2">
-            {openedWithinUnits.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => {
-                  setOpenedWithinUnit(opt.value);
-                  const max = maxValues[opt.value] || 12;
-                  if (openedWithinValue > max) setOpenedWithinValue(max);
-                }}
-                className={cn(
-                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                  openedWithinUnit === opt.value
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <input
+              type="number"
+              min={1}
+              max={currentMax}
+              value={rawInput}
+              onChange={(e) => {
+                setRawInput(e.target.value);
+                const v = parseInt(e.target.value);
+                if (!isNaN(v) && v >= 1 && v <= currentMax) {
+                  setOpenedWithinValue(v);
+                }
+              }}
+              onBlur={() => {
+                const v = Math.max(1, Math.min(currentMax, parsedRaw || 1));
+                setOpenedWithinValue(v);
+                setRawInput(String(v));
+              }}
+              className={cn(
+                "w-16 rounded-lg border bg-secondary px-3 py-2 text-xs text-foreground text-center focus:outline-none focus:ring-2 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+                validationError ? "border-destructive focus:ring-destructive" : "border-border focus:ring-primary"
+              )}
+            />
+            <div className="flex gap-2">
+              {openedWithinUnits.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    setOpenedWithinUnit(opt.value);
+                    const max = maxValues[opt.value] || 12;
+                    if (openedWithinValue > max) {
+                      setOpenedWithinValue(max);
+                      setRawInput(String(max));
+                    }
+                  }}
+                  className={cn(
+                    "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                    openedWithinUnit === opt.value
+                      ? "bg-primary text-primary-foreground shadow-md"
+                      : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
+          {validationError && (
+            <p className="text-xs text-destructive">{validationError}</p>
+          )}
         </div>
       </section>
 
