@@ -72,7 +72,7 @@ export function RestaurantCard({ restaurant }: { restaurant: Restaurant }) {
             className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
           >
             <ExternalLink className="h-3 w-3" />
-            View on Yelp
+            View on Google Maps
           </a>
         )}
       </div>

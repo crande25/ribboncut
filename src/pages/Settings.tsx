@@ -1,4 +1,4 @@
-import { Bell, Sun, Moon, Smartphone, Leaf, MapPin } from "lucide-react";
+import { Bell, Sun, Moon, Smartphone, Leaf, MapPin, Calendar } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
@@ -26,9 +26,17 @@ const scheduleOptions = [
   { value: "weekly", label: "Weekly" },
 ];
 
+const unitOptions = [
+  { value: "days", label: "Days" },
+  { value: "weeks", label: "Weeks" },
+  { value: "months", label: "Months" },
+];
+
 export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
+  const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 2);
+  const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "weeks");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
@@ -51,6 +59,42 @@ export default function Settings() {
           Where do you wanna eat? Add your spots here.
         </p>
         <CitySearch selectedCities={selectedCities} onCitiesChange={setSelectedCities} />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Opened Within</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Only show restaurants that opened within this time period.
+        </p>
+        <div className="flex items-center gap-3">
+          <input
+            type="number"
+            min={1}
+            max={365}
+            value={openedWithinValue}
+            onChange={(e) => setOpenedWithinValue(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-16 rounded-lg border border-border bg-secondary px-3 py-2 text-sm text-foreground"
+          />
+          <div className="flex gap-2">
+            {unitOptions.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setOpenedWithinUnit(opt.value)}
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  openedWithinUnit === opt.value
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </section>
 
       <section className="space-y-3">
