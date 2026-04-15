@@ -14,7 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      restaurant_sightings: {
+        Row: {
+          city: string
+          first_seen_at: string
+          yelp_id: string
+        }
+        Insert: {
+          city: string
+          first_seen_at?: string
+          yelp_id: string
+        }
+        Update: {
+          city?: string
+          first_seen_at?: string
+          yelp_id?: string
+        }
+        Relationships: []
+      }
+      scan_log: {
+        Row: {
+          city: string
+          id: string
+          new_count: number
+          scanned_at: string
+        }
+        Insert: {
+          city: string
+          id?: string
+          new_count?: number
+          scanned_at?: string
+        }
+        Update: {
+          city?: string
+          id?: string
+          new_count?: number
+          scanned_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
