@@ -28,17 +28,27 @@ export function CityChecklist({ selectedCities, onCitiesChange }: CityChecklistP
 
   return (
     <div className="space-y-3">
-      <button
-        onClick={toggleAll}
-        className={cn(
-          "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-          allSelected
-            ? "bg-primary text-primary-foreground shadow-md"
-            : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+      <div className="flex gap-2">
+        <button
+          onClick={toggleAll}
+          className={cn(
+            "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+            allSelected
+              ? "bg-primary text-primary-foreground shadow-md"
+              : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+          )}
+        >
+          {allSelected ? "Deselect All" : "Select All"}
+        </button>
+        {selectedCities.length > 0 && (
+          <button
+            onClick={() => onCitiesChange([])}
+            className="rounded-full px-4 py-2 text-xs font-medium transition-all no-select bg-destructive/15 text-destructive hover:bg-destructive/25"
+          >
+            Clear Locations
+          </button>
         )}
-      >
-        {allSelected ? "Deselect All" : "Select All"}
-      </button>
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         {SE_MICHIGAN_CITIES.map((city) => {
