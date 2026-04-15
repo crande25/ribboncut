@@ -1,4 +1,4 @@
-import { Bell, Sun, Moon, Monitor, Leaf, Calendar, MapPin } from "lucide-react";
+import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin } from "lucide-react";
 import { CitySearch } from "@/components/CitySearch";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
@@ -22,7 +22,7 @@ const openedWithinUnits = [
 const maxValues: Record<string, number> = { days: 90, weeks: 12, months: 12 };
 
 const themeOptions = [
-  { value: "system" as const, label: "Device", icon: Monitor },
+  { value: "system" as const, label: "Device", icon: Smartphone },
   { value: "light" as const, label: "Light", icon: Sun },
   { value: "dark" as const, label: "Dark", icon: Moon },
 ];
