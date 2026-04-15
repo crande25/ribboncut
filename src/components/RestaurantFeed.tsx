@@ -170,7 +170,7 @@ export function RestaurantFeed() {
     selectedCities.forEach(c => { initialOffsets[c] = 0; });
 
     try {
-      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, undefined, dietaryFilters);
+      const { results, newOffsets, anyHasMore } = await fetchPage(selectedCities, initialOffsets, openedSince, dietaryFilters);
       if (results.length > 0) {
         setRestaurants(results);
         setCityOffsets(newOffsets);
