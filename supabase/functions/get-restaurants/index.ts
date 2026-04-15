@@ -1,3 +1,5 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -21,6 +23,8 @@ Deno.serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const url = new URL(req.url);
     const openedSince = url.searchParams.get("opened_since");
@@ -78,6 +82,18 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Batch-fetch atmosphere cache for all yelp_ids
+    const yelpIds = sightings.map((s: any) => s.yelp_id);
+    const { data: atmosphereData } = await supabase
+      .from("atmosphere_cache")
+      .select("yelp_id, atmosphere_summary")
+      .in("yelp_id", yelpIds);
+
+    const atmosphereMap = new Map<string, string>();
+    for (const row of atmosphereData || []) {
+      atmosphereMap.set(row.yelp_id, row.atmosphere_summary);
+    }
+
     // Fetch live Yelp details for each sighting
     const restaurants = await Promise.all(
       sightings.map(async (sighting: any) => {
@@ -106,11 +122,16 @@ Deno.serve(async (req) => {
             if (!hasMatch) return null;
           }
 
+          // Use cached atmosphere or fallback
+          const cachedAtmosphere = atmosphereMap.get(sighting.yelp_id);
+          const categories = (biz.categories || []).map((c: any) => c.title).join(", ");
+          const fallbackAtmosphere = `${categories}${biz.price ? ` · ${biz.price}` : ""}`;
+
           return {
             id: biz.id,
             name: biz.name,
             city: sighting.city,
-            cuisine: (biz.categories || []).map((c: any) => c.title).join(", "),
+            cuisine: categories,
             priceRange: biz.price || "$",
             imageUrl: biz.image_url || "",
             rating: biz.rating,
@@ -122,6 +143,7 @@ Deno.serve(async (req) => {
             hours: biz.hours || [],
             coordinates: biz.coordinates,
             firstSeenAt: sighting.first_seen_at,
+            atmosphereSummary: cachedAtmosphere || fallbackAtmosphere,
           };
         } catch (err) {
           console.error(`Error fetching ${sighting.yelp_id}:`, err);
