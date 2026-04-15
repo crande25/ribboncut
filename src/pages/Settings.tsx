@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin } from "lucide-react";
 import { CityChecklist } from "@/components/CityChecklist";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
