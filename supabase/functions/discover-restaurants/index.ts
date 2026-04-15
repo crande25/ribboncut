@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
       limit: String(limit),
       offset: String(offset),
       categories: baseCategories.join(","),
+      attributes: "hot_and_new",
     });
 
     const yelpResponse = await fetch(
