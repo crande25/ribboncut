@@ -218,10 +218,10 @@ Deno.serve(async (req) => {
     // Generate atmosphere summaries for restaurants not yet cached
     if (LOVABLE_API_KEY && newYelpIds.length > 0) {
       // Deduplicate by yelp_id
-      const uniqueMap = new Map<string, { name: string; categories: string }>();
+      const uniqueMap = new Map<string, { name: string; categories: string; price: string | null; rating: number | null; city: string }>();
       for (const item of newYelpIds) {
         if (!uniqueMap.has(item.yelp_id)) {
-          uniqueMap.set(item.yelp_id, { name: item.name, categories: item.categories });
+          uniqueMap.set(item.yelp_id, { name: item.name, categories: item.categories, price: item.price, rating: item.rating, city: item.city });
         }
       }
       const uniqueIds = Array.from(uniqueMap.keys());
@@ -240,10 +240,11 @@ Deno.serve(async (req) => {
       for (const yelpId of uncached) {
         const info = uniqueMap.get(yelpId)!;
         const summary = await generateAtmosphereSummary(
-          yelpId,
           info.name,
           info.categories,
-          YELP_API_KEY,
+          info.price,
+          info.rating,
+          info.city,
           LOVABLE_API_KEY,
         );
 
