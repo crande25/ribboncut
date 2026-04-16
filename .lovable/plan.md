@@ -1,40 +1,46 @@
 
 
-## Plan: Google Places Reviews for Vibe Summaries
+## Plan: Diff-Based New Restaurant Detection
 
-### Overview
-Update `scan-restaurants` to look up each uncached restaurant on Google Places via Text Search, fetch its reviews, and feed real review text to Lovable AI for a vibe summary. This replaces the current metadata-only inference with actual customer impressions.
+### Problem
+Currently, any restaurant discovered for the first time gets `first_seen_at = now()`, making old restaurants appear "new." Yelp results are non-deterministic, so old restaurants surface unpredictably.
 
-### How the mapping works
-For each restaurant without a cached atmosphere summary:
-1. **Google Places Text Search** — query `"{name}", {city}` to get a `place_id`
-2. **Google Places Details** — fetch `reviews` field using the `place_id` (up to 5 reviews returned)
-3. **AI summary** — send review snippets to `gemini-2.5-flash-lite` with the existing vibe prompt, now grounded in real customer language
-4. **Cache** — upsert result into `atmosphere_cache`
+### Solution
+Change the logic so that `first_seen_at` defaults to 10 years ago for all inserts. Then, after each scan, diff today's result set against what was in the DB *before* the scan. Any `yelp_id` that was truly absent from `restaurant_sightings` before this scan is a genuinely new discovery — update its `first_seen_at` to now().
 
-If Google Places returns no match or no reviews, fall back to the current metadata-based inference (name + categories + price).
+This way, only restaurants that literally did not exist in our database before today's scan get marked as recent. Restaurants we simply hadn't encountered in previous scans get silently added with an old date.
 
-### Changes to `scan-restaurants/index.ts`
+### Implementation
 
-1. **Add `GOOGLE_PLACES_API_KEY`** env var read (already configured as a secret)
-2. **New function `fetchGoogleReviews(name, city, apiKey)`**:
-   - Calls Google Places Text Search: `https://maps.googleapis.com/maps/api/place/textsearch/json?query={name}+{city}&type=restaurant&key=...`
-   - Takes the first result's `place_id`
-   - Calls Place Details: `https://maps.googleapis.com/maps/api/place/details/json?place_id=...&fields=reviews&key=...`
-   - Returns up to 5 review text strings, or empty array
-3. **Update `generateAtmosphereSummary`** — add a `reviewTexts: string[]` parameter. When reviews are available, include them in the AI prompt so the model summarizes actual customer impressions. When empty, fall back to current metadata-only prompt.
-4. **Update the atmosphere generation loop** — before calling AI, call `fetchGoogleReviews`. Pass results into the updated summary function.
-5. **Rate limiting** — increase delay between restaurants to ~300ms to stay within Google's QPS limits.
+**1. Add a `discovered_new` column (migration)**
+- Add `is_new_discovery boolean default false` to `restaurant_sightings`
+- This flags restaurants that appeared for the first time in the diff, distinguishing them from baseline backfill
 
-### Cost
-- Each uncached restaurant = 2 Google API calls (Text Search + Details)
-- Covered by Google's $200/month free credit
-- Already-cached restaurants are skipped (no additional cost)
+**2. Update `scan-restaurants/index.ts`**
 
-### No other files change
-- `get-restaurants/index.ts` already reads from `atmosphere_cache` and attaches summaries — no changes needed
-- Frontend already displays `atmosphereSummary` — no changes needed
+Before the Yelp scan loop:
+- Query all existing `yelp_id`s from `restaurant_sightings` for the cities being scanned → `existingIds` Set
+
+In the upsert logic:
+- Change the insert default: set `first_seen_at` to `now() - interval '10 years'` for all new rows (instead of `now()`)
+- Use `ignoreDuplicates: true` so existing rows aren't touched
+
+After the scan loop (the diff):
+- Compute `newlyDiscovered = scannedIds - existingIds`
+- For each newly discovered ID, update `first_seen_at = now()` and `is_new_discovery = true`
+- Log how many genuinely new restaurants were found
+
+Atmosphere generation continues as before — only uncached restaurants get summaries.
+
+**3. Update `get-restaurants/index.ts`**
+- No changes needed — it already reads `first_seen_at` and the `opened_since` filter works naturally
+
+### Why this works
+- Day 1 scan: all restaurants go in with old dates (baseline)
+- Day 2 scan: same restaurants are skipped (ignoreDuplicates). Any new `yelp_id` not in yesterday's set gets `first_seen_at = today`
+- Yelp result shuffling doesn't matter — once a restaurant is in the DB, it stays with its original date
 
 ### Files Modified
-- `supabase/functions/scan-restaurants/index.ts` — add Google Places lookup + review-based AI prompts
+- `supabase/functions/scan-restaurants/index.ts` — diff logic, default old dates
+- New migration — add `is_new_discovery` column
 
