@@ -44,6 +44,16 @@ const CITY_BBOXES: Record<string, { s: number; w: number; n: number; e: number }
   "Waterford, MI":        { s: 42.610, w: -83.470, n: 42.730, e: -83.300 },
   "Shelby Township, MI":  { s: 42.620, w: -83.090, n: 42.730, e: -82.940 },
   "West Bloomfield, MI":  { s: 42.500, w: -83.450, n: 42.610, e: -83.310 },
+  "Birmingham, MI":       { s: 42.520, w: -83.260, n: 42.580, e: -83.190 },
+  "Plymouth, MI":         { s: 42.345, w: -83.510, n: 42.405, e: -83.430 },
+  "Ferndale, MI":         { s: 42.440, w: -83.160, n: 42.485, e: -83.100 },
+  "Ypsilanti, MI":        { s: 42.220, w: -83.660, n: 42.290, e: -83.580 },
+  "Northville, MI":       { s: 42.405, w: -83.520, n: 42.460, e: -83.440 },
+  "Grosse Pointe, MI":    { s: 42.360, w: -82.940, n: 42.470, e: -82.840 },
+  "Bloomfield Hills, MI": { s: 42.540, w: -83.290, n: 42.610, e: -83.210 },
+  "Wyandotte, MI":        { s: 42.180, w: -83.200, n: 42.230, e: -83.130 },
+  "Monroe, MI":           { s: 41.890, w: -83.450, n: 41.960, e: -83.340 },
+  "Port Huron, MI":       { s: 42.940, w: -82.500, n: 43.030, e: -82.400 },
 };
 
 /** Build an NxN grid of cell centers + radius covering a bounding box. */
