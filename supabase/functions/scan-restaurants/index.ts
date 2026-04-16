@@ -142,6 +142,21 @@ Deno.serve(async (req) => {
     const newYelpIds: { yelp_id: string; name: string; categories: string; price: string | null; rating: number | null; city: string }[] = [];
     const citiesToScan = cityFilter || SE_MICHIGAN_CITIES;
 
+    // Step 1: Snapshot existing yelp_ids BEFORE the scan
+    const { data: existingRows } = await supabase
+      .from("restaurant_sightings")
+      .select("yelp_id");
+    const existingIds = new Set((existingRows || []).map((r: any) => r.yelp_id));
+    console.log(`Pre-scan snapshot: ${existingIds.size} existing restaurants in DB`);
+
+    // Track all yelp_ids found in this scan
+    const scannedIds = new Set<string>();
+
+    // Step 2: Default insert date is 10 years ago
+    const tenYearsAgo = new Date();
+    tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+    const defaultFirstSeen = tenYearsAgo.toISOString();
+
     for (const city of citiesToScan) {
       let offset = 0;
       let cityTotal = 0;
@@ -163,13 +178,20 @@ Deno.serve(async (req) => {
         const businesses = data.businesses || [];
         if (businesses.length === 0) break;
 
-        const rows = businesses.map((biz: any) => ({ yelp_id: biz.id, city }));
+        // Insert with backdated first_seen_at; ignoreDuplicates keeps existing rows untouched
+        const rows = businesses.map((biz: any) => ({
+          yelp_id: biz.id,
+          city,
+          first_seen_at: defaultFirstSeen,
+          is_new_discovery: false,
+        }));
         const { error } = await supabase
           .from("restaurant_sightings")
           .upsert(rows, { onConflict: "yelp_id", ignoreDuplicates: true });
         if (error) console.error(`DB error for ${city}:`, error.message);
 
         for (const biz of businesses) {
+          scannedIds.add(biz.id);
           newYelpIds.push({
             yelp_id: biz.id, name: biz.name,
             categories: (biz.categories || []).map((c: any) => c.title).join(", "),
@@ -182,17 +204,33 @@ Deno.serve(async (req) => {
         if (offset >= (data.total || 0)) break;
       }
 
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const { count } = await supabase
-        .from("restaurant_sightings")
-        .select("*", { count: "exact", head: true })
-        .eq("city", city)
-        .gte("first_seen_at", today.toISOString());
+      results.push({ city, newCount: 0, total: cityTotal });
+      console.log(`Scanned ${city}: ${cityTotal} businesses`);
+    }
 
-      const cityNewCount = count || 0;
-      await supabase.from("scan_log").insert({ city, new_count: cityNewCount });
-      results.push({ city, newCount: cityNewCount, total: cityTotal });
-      console.log(`Scanned ${city}: ${cityTotal} businesses, ${cityNewCount} new today`);
+    // Step 3: Diff — find genuinely new restaurants
+    const newlyDiscovered = [...scannedIds].filter((id) => !existingIds.has(id));
+    console.log(`Diff result: ${newlyDiscovered.length} genuinely new restaurants discovered`);
+
+    // Update newly discovered restaurants with current timestamp
+    if (newlyDiscovered.length > 0) {
+      const now = new Date().toISOString();
+      for (const yelpId of newlyDiscovered) {
+        const { error } = await supabase
+          .from("restaurant_sightings")
+          .update({ first_seen_at: now, is_new_discovery: true })
+          .eq("yelp_id", yelpId);
+        if (error) console.error(`Error marking ${yelpId} as new:`, error.message);
+      }
+
+      // Update results with accurate new counts
+      for (const r of results) {
+        const cityNewIds = newlyDiscovered.filter((id) => {
+          const info = newYelpIds.find((n) => n.yelp_id === id);
+          return info?.city === r.city;
+        });
+        r.newCount = cityNewIds.length;
+      }
     }
 
     // Generate atmosphere summaries for uncached restaurants

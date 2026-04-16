@@ -36,16 +36,19 @@ export type Database = {
         Row: {
           city: string
           first_seen_at: string
+          is_new_discovery: boolean
           yelp_id: string
         }
         Insert: {
           city: string
           first_seen_at?: string
+          is_new_discovery?: boolean
           yelp_id: string
         }
         Update: {
           city?: string
           first_seen_at?: string
+          is_new_discovery?: boolean
           yelp_id?: string
         }
         Relationships: []
