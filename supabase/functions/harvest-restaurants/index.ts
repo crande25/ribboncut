@@ -201,6 +201,88 @@ Deno.serve(async (req) => {
       });
     }
 
+    // === GRID === geographic lat/lng slicing to bypass Yelp's per-query 1000 cap.
+    // Each grid cell is queried as an independent latitude/longitude+radius search,
+    // optionally multiplied by price tiers. With no `cell` index, returns the plan.
+    if (mode === "grid") {
+      const gridCity = body.city;
+      if (!gridCity) {
+        return new Response(JSON.stringify({ error: "city required for grid mode" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const bbox = CITY_BBOXES[gridCity];
+      if (!bbox) {
+        return new Response(JSON.stringify({
+          error: `No bounding box defined for "${gridCity}"`,
+          available_cities: Object.keys(CITY_BBOXES),
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const gridSize = Math.max(2, Math.min(8, Number(body.gridSize) || 4));
+      const withPrices = Boolean(body.withPrices);
+      const cells = buildGrid(bbox, gridSize);
+
+      // Plan mode: return list of invocations to run
+      if (body.cell === undefined || body.cell === null) {
+        const plan: any[] = [];
+        for (let i = 0; i < cells.length; i++) {
+          if (withPrices) {
+            for (const p of PRICE_TIERS) plan.push({ cell: i, price: p });
+            plan.push({ cell: i, price: "none" });
+          } else {
+            plan.push({ cell: i });
+          }
+        }
+        return new Response(JSON.stringify({
+          city: gridCity, mode: "grid", gridSize, withPrices,
+          total_cells: cells.length,
+          total_invocations: plan.length,
+          cells,
+          plan,
+          example: { mode: "grid", city: gridCity, gridSize, withPrices, cell: 0 },
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Execute one cell (optionally one price tier)
+      const cellIdx = Number(body.cell);
+      if (!Number.isFinite(cellIdx) || cellIdx < 0 || cellIdx >= cells.length) {
+        return new Response(JSON.stringify({ error: `Invalid cell index ${body.cell}` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const c = cells[cellIdx];
+      const supabaseGrid = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+      const { data: existingRowsGrid } = await supabaseGrid
+        .from("restaurant_sightings")
+        .select("yelp_id")
+        .eq("city", gridCity);
+      const existingIdsGrid = new Set((existingRowsGrid || []).map((r: any) => r.yelp_id));
+
+      const cellIds = new Set<string>();
+      const baseParams: Record<string, string> = {
+        latitude: String(c.lat),
+        longitude: String(c.lng),
+        radius: String(c.radius),
+        categories: "restaurants",
+        sort_by: "best_match",
+      };
+      if (body.price && body.price !== "none") baseParams.price = String(body.price);
+
+      const queries = await paginateQuery(YELP_API_KEY, baseParams, cellIds);
+      const allIds = [...cellIds];
+      const { newCount, dbErrors } = await persistIds(supabaseGrid, allIds, gridCity, existingIdsGrid);
+
+      return new Response(JSON.stringify({
+        success: true, city: gridCity, mode: "grid", cell: cellIdx,
+        cell_center: { lat: c.lat, lng: c.lng, radius: c.radius },
+        price: body.price || "all",
+        unique_ids_in_cell: cellIds.size,
+        new_to_db: newCount,
+        queries,
+        db_errors: dbErrors,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // === HARVEST ===
     const city = body.city;
     if (!city) {
