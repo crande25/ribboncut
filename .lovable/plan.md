@@ -1,46 +1,36 @@
 
 
-## Plan: Diff-Based New Restaurant Detection
+## Plan: Proof-of-Concept — Detroit Restaurant Counts by Price Tier
 
-### Problem
-Currently, any restaurant discovered for the first time gets `first_seen_at = now()`, making old restaurants appear "new." Yelp results are non-deterministic, so old restaurants surface unpredictably.
-
-### Solution
-Change the logic so that `first_seen_at` defaults to 10 years ago for all inserts. Then, after each scan, diff today's result set against what was in the DB *before* the scan. Any `yelp_id` that was truly absent from `restaurant_sightings` before this scan is a genuinely new discovery — update its `first_seen_at` to now().
-
-This way, only restaurants that literally did not exist in our database before today's scan get marked as recent. Restaurants we simply hadn't encountered in previous scans get silently added with an old date.
+### Goal
+Before committing to a multi-pass strategy, test how many restaurants Yelp reports for Detroit at each price level (`1`, `2`, `3`, `4`) and without a price filter. If 4 price-filtered passes × 1,000 results each covers the full inventory, that's sufficient — no need for category or sort permutations.
 
 ### Implementation
 
-**1. Add a `discovered_new` column (migration)**
-- Add `is_new_discovery boolean default false` to `restaurant_sightings`
-- This flags restaurants that appeared for the first time in the diff, distinguishing them from baseline backfill
+**1. Create a temporary test edge function `test-yelp-counts/index.ts`**
 
-**2. Update `scan-restaurants/index.ts`**
+A lightweight function that queries Yelp for Detroit with each price value and returns only the `total` field:
 
-Before the Yelp scan loop:
-- Query all existing `yelp_id`s from `restaurant_sightings` for the cities being scanned → `existingIds` Set
+```
+For each price in [1, 2, 3, 4, null]:
+  GET /businesses/search?location=Detroit,MI&categories=restaurants&price={price}&limit=1
+  Record data.total
+Return { price_1: N, price_2: N, price_3: N, price_4: N, no_filter: N, sum_by_price: N }
+```
 
-In the upsert logic:
-- Change the insert default: set `first_seen_at` to `now() - interval '10 years'` for all new rows (instead of `now()`)
-- Use `ignoreDuplicates: true` so existing rows aren't touched
+This tells us:
+- Whether the sum of price-filtered totals ≥ the unfiltered total (i.e., full coverage)
+- Whether any single tier exceeds 1,000 (would need sub-filtering)
 
-After the scan loop (the diff):
-- Compute `newlyDiscovered = scannedIds - existingIds`
-- For each newly discovered ID, update `first_seen_at = now()` and `is_new_discovery = true`
-- Log how many genuinely new restaurants were found
+**2. Deploy and call it**
 
-Atmosphere generation continues as before — only uncached restaurants get summaries.
+Deploy the function, call it once, read the results.
 
-**3. Update `get-restaurants/index.ts`**
-- No changes needed — it already reads `first_seen_at` and the `opened_since` filter works naturally
+**3. Clean up**
 
-### Why this works
-- Day 1 scan: all restaurants go in with old dates (baseline)
-- Day 2 scan: same restaurants are skipped (ignoreDuplicates). Any new `yelp_id` not in yesterday's set gets `first_seen_at = today`
-- Yelp result shuffling doesn't matter — once a restaurant is in the DB, it stays with its original date
+Delete the test function after we have the numbers. Then decide: if 4 passes suffice, update `scan-restaurants` to simply loop over `price=1..4` with `maxResults=1000` each. That's only 4× the current work — very manageable.
 
-### Files Modified
-- `supabase/functions/scan-restaurants/index.ts` — diff logic, default old dates
-- New migration — add `is_new_discovery` column
+### Files
+- Create `supabase/functions/test-yelp-counts/index.ts` (temporary)
+- No database changes
 
