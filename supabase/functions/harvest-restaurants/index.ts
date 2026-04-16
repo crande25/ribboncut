@@ -38,7 +38,7 @@ async function yelpSearch(
   return { businesses: data.businesses || [], total: data.total || 0 };
 }
 
-/** Paginate a single query permutation, collecting up to 240 results */
+/** Paginate a single query, collecting up to 240 results */
 async function paginateQuery(
   apiKey: string,
   baseParams: Record<string, string>,
@@ -46,28 +46,23 @@ async function paginateQuery(
 ): Promise<number> {
   let queriesMade = 0;
   let offset = 0;
-
   while (offset < YELP_MAX_RESULTS) {
     const params = { ...baseParams, limit: String(YELP_PAGE_LIMIT), offset: String(offset) };
     const { businesses, total } = await yelpSearch(apiKey, params);
     queriesMade++;
-
     if (businesses.length === 0) break;
     for (const biz of businesses) ids.add(biz.id);
-
     offset += businesses.length;
     if (offset >= Math.min(total, YELP_MAX_RESULTS)) break;
     await new Promise((r) => setTimeout(r, 80));
   }
-
   return queriesMade;
 }
 
-/** Probe price tiers for a city */
+/** Probe price tiers */
 async function probePriceTiers(apiKey: string, location: string) {
   const totals: Record<string, number> = {};
   let needsPhase2 = false;
-
   for (const price of PRICE_TIERS) {
     const { total } = await yelpSearch(apiKey, {
       location, categories: "restaurants", price, limit: "1", offset: "0",
@@ -75,7 +70,6 @@ async function probePriceTiers(apiKey: string, location: string) {
     totals[`${"$".repeat(Number(price))}`] = total;
     if (total > YELP_MAX_RESULTS) needsPhase2 = true;
   }
-
   const { total: allTotal } = await yelpSearch(apiKey, {
     location, categories: "restaurants", limit: "1", offset: "0",
   });
@@ -83,34 +77,36 @@ async function probePriceTiers(apiKey: string, location: string) {
   totals["unpriced_est"] = Math.max(0, allTotal - pricedSum);
   totals["all_no_filter"] = allTotal;
   if (totals["unpriced_est"] > YELP_MAX_RESULTS) needsPhase2 = true;
-
   return { totals, needsPhase2 };
 }
 
-/** Phase 1: price-only pagination */
-async function harvestPhase1(apiKey: string, location: string, ids: Set<string>) {
-  let q = 0;
-  for (const price of PRICE_TIERS) {
-    q += await paginateQuery(apiKey, { location, categories: "restaurants", price, sort_by: "best_match" }, ids);
-  }
-  // Unpriced catch-all
-  q += await paginateQuery(apiKey, { location, categories: "restaurants", sort_by: "best_match" }, ids);
-  return q;
-}
+async function persistIds(
+  supabase: any,
+  ids: string[],
+  city: string,
+  existingIds: Set<string>,
+) {
+  const tenYearsAgo = new Date();
+  tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+  const defaultFirstSeen = tenYearsAgo.toISOString();
+  let dbErrors = 0;
 
-/** Phase 2: price × category permutations */
-async function harvestPhase2(apiKey: string, location: string, ids: Set<string>) {
-  let q = 0;
-  for (const price of PRICE_TIERS) {
-    for (const cat of CATEGORIES) {
-      q += await paginateQuery(apiKey, { location, categories: cat, price, sort_by: "best_match" }, ids);
-    }
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    const rows = chunk.map((id) => ({
+      yelp_id: id,
+      city,
+      first_seen_at: defaultFirstSeen,
+      is_new_discovery: false,
+    }));
+    const { error } = await supabase
+      .from("restaurant_sightings")
+      .upsert(rows, { onConflict: "yelp_id", ignoreDuplicates: true });
+    if (error) { console.error(`DB upsert error:`, error.message); dbErrors++; }
   }
-  // Unpriced × each category
-  for (const cat of CATEGORIES) {
-    q += await paginateQuery(apiKey, { location, categories: cat, sort_by: "best_match" }, ids);
-  }
-  return q;
+
+  const newIds = ids.filter((id) => !existingIds.has(id));
+  return { newCount: newIds.length, dbErrors };
 }
 
 Deno.serve(async (req) => {
@@ -122,7 +118,6 @@ Deno.serve(async (req) => {
     const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
     if (!YELP_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return new Response(
         JSON.stringify({ error: "Missing required env vars" }),
@@ -135,99 +130,125 @@ Deno.serve(async (req) => {
       try { body = await req.json(); } catch {}
     }
 
-    const mode = body.mode || "harvest"; // "probe" | "harvest"
+    const mode = body.mode || "harvest";
+    // Modes:
+    //   "probe"   — returns price totals + phase decision for given cities
+    //   "harvest" — harvests ONE city. For Phase 1 cities, does everything.
+    //               For Phase 2, accepts optional "slice" param to run one price×category combo at a time.
+    //   "harvest_all_slices" — for a Phase 2 city, runs ALL slices sequentially (may timeout for huge cities)
 
-    // === PROBE MODE ===
-    // Returns price tier totals and phase decision for each city
+    // === PROBE ===
     if (mode === "probe") {
       const cities = body.cities || SE_MICHIGAN_CITIES;
-      const probeResults: any[] = [];
+      const results: any[] = [];
       for (const city of cities) {
         const { totals, needsPhase2 } = await probePriceTiers(YELP_API_KEY, city);
-        probeResults.push({ city, totals, needsPhase2 });
+        results.push({ city, totals, needsPhase2 });
       }
-      return new Response(JSON.stringify(probeResults), {
+      return new Response(JSON.stringify(results), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // === HARVEST MODE ===
-    // Process ONE city at a time (edge function timeout constraint)
+    // === HARVEST ===
     const city = body.city;
     if (!city) {
       return new Response(
-        JSON.stringify({ error: "city parameter required for harvest mode. Use mode=probe to scan all cities first." }),
+        JSON.stringify({
+          error: "city required",
+          usage: {
+            probe: { mode: "probe", cities: ["Detroit, MI"] },
+            harvest_phase1: { mode: "harvest", city: "Monroe, MI" },
+            harvest_slice: { mode: "harvest", city: "Detroit, MI", slice: { price: "1", category: "restaurants" } },
+            harvest_unpriced: { mode: "harvest", city: "Detroit, MI", slice: { price: "none", category: "restaurants" } },
+          },
+        }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Snapshot existing IDs for this city
+    // Get existing IDs for this city
     const { data: existingRows } = await supabase
       .from("restaurant_sightings")
       .select("yelp_id")
       .eq("city", city);
     const existingIds = new Set((existingRows || []).map((r: any) => r.yelp_id));
-    console.log(`${city}: ${existingIds.size} existing in DB`);
 
-    // Probe
+    // Probe first
     const { totals, needsPhase2 } = await probePriceTiers(YELP_API_KEY, city);
-    console.log(`${city} probe:`, JSON.stringify(totals), `Phase ${needsPhase2 ? 2 : 1}`);
 
-    // Harvest
-    const cityIds = new Set<string>();
-    const phase = needsPhase2 ? 2 : 1;
-    let queriesMade: number;
+    // If Phase 1 is enough, just do it all
+    if (!needsPhase2) {
+      const cityIds = new Set<string>();
+      let q = 0;
+      for (const price of PRICE_TIERS) {
+        q += await paginateQuery(YELP_API_KEY, { location: city, categories: "restaurants", price, sort_by: "best_match" }, cityIds);
+      }
+      q += await paginateQuery(YELP_API_KEY, { location: city, categories: "restaurants", sort_by: "best_match" }, cityIds);
 
-    if (needsPhase2) {
-      queriesMade = await harvestPhase2(YELP_API_KEY, city, cityIds);
-    } else {
-      queriesMade = await harvestPhase1(YELP_API_KEY, city, cityIds);
+      const allIds = [...cityIds];
+      const { newCount, dbErrors } = await persistIds(supabase, allIds, city, existingIds);
+      await supabase.from("scan_log").insert({ city, new_count: newCount });
+
+      return new Response(JSON.stringify({
+        success: true, city, phase: 1, probe: totals,
+        unique_ids: cityIds.size, new_to_db: newCount, queries: q, db_errors: dbErrors,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    console.log(`${city}: ${cityIds.size} unique IDs from ${queriesMade} queries`);
+    // Phase 2 — if no slice specified, return the list of slices to run
+    const slice = body.slice;
+    if (!slice) {
+      // Generate all slices the caller should invoke
+      const slices: any[] = [];
+      for (const price of PRICE_TIERS) {
+        for (const cat of CATEGORIES) {
+          slices.push({ price, category: cat });
+        }
+      }
+      // Unpriced slices
+      for (const cat of CATEGORIES) {
+        slices.push({ price: "none", category: cat });
+      }
 
-    // Persist — upsert in chunks, backdated for baseline
-    const tenYearsAgo = new Date();
-    tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
-    const defaultFirstSeen = tenYearsAgo.toISOString();
-
-    const allIds = [...cityIds];
-    let dbErrors = 0;
-    for (let i = 0; i < allIds.length; i += 500) {
-      const chunk = allIds.slice(i, i + 500);
-      const rows = chunk.map((id) => ({
-        yelp_id: id,
+      return new Response(JSON.stringify({
         city,
-        first_seen_at: defaultFirstSeen,
-        is_new_discovery: false,
-      }));
-      const { error } = await supabase
-        .from("restaurant_sightings")
-        .upsert(rows, { onConflict: "yelp_id", ignoreDuplicates: true });
-      if (error) { console.error(`DB upsert error:`, error.message); dbErrors++; }
-    }
-
-    const newIds = allIds.filter((id) => !existingIds.has(id));
-
-    // Log scan
-    await supabase.from("scan_log").insert({ city, new_count: newIds.length });
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        city,
-        phase,
+        phase: 2,
         probe: totals,
-        unique_ids_found: cityIds.size,
-        new_to_db: newIds.length,
-        already_known: cityIds.size - newIds.length,
-        queries_made: queriesMade,
-        db_errors: dbErrors,
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+        message: "City needs Phase 2. Call this endpoint once per slice below.",
+        existing_in_db: existingIds.size,
+        slices,
+        total_slices: slices.length,
+        example: { mode: "harvest", city, slice: slices[0] },
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Run one slice
+    const cityIds = new Set<string>();
+    const baseParams: Record<string, string> = {
+      location: city,
+      categories: slice.category || "restaurants",
+      sort_by: "best_match",
+    };
+    if (slice.price && slice.price !== "none") {
+      baseParams.price = slice.price;
+    }
+
+    const q = await paginateQuery(YELP_API_KEY, baseParams, cityIds);
+    const allIds = [...cityIds];
+    const { newCount, dbErrors } = await persistIds(supabase, allIds, city, existingIds);
+
+    return new Response(JSON.stringify({
+      success: true, city, phase: 2,
+      slice,
+      unique_ids: cityIds.size,
+      new_to_db: newCount,
+      queries: q,
+      db_errors: dbErrors,
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
   } catch (error: unknown) {
     console.error("Harvest error:", error);
     const msg = error instanceof Error ? error.message : "Unknown error";
