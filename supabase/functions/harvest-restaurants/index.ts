@@ -21,6 +21,57 @@ const SE_MICHIGAN_CITIES = [
   "Shelby Township, MI", "Waterford, MI",
 ];
 
+// Bounding boxes (south, west, north, east) for dense cities. Slightly padded.
+// Used by the grid harvest mode to slice the city into many small geographic
+// cells so each cell can be queried independently against Yelp's per-query 1000 cap.
+const CITY_BBOXES: Record<string, { s: number; w: number; n: number; e: number }> = {
+  "Detroit, MI":          { s: 42.255, w: -83.288, n: 42.450, e: -82.910 },
+  "Warren, MI":           { s: 42.450, w: -83.080, n: 42.560, e: -82.930 },
+  "Southfield, MI":       { s: 42.430, w: -83.310, n: 42.530, e: -83.190 },
+  "Sterling Heights, MI": { s: 42.530, w: -83.080, n: 42.660, e: -82.940 },
+  "Livonia, MI":          { s: 42.350, w: -83.430, n: 42.450, e: -83.290 },
+  "Ann Arbor, MI":        { s: 42.220, w: -83.820, n: 42.330, e: -83.660 },
+  "Canton, MI":           { s: 42.260, w: -83.555, n: 42.355, e: -83.420 },
+  "Dearborn, MI":         { s: 42.270, w: -83.310, n: 42.355, e: -83.140 },
+  "Troy, MI":             { s: 42.530, w: -83.220, n: 42.640, e: -83.080 },
+  "Farmington Hills, MI": { s: 42.430, w: -83.450, n: 42.530, e: -83.330 },
+  "Rochester Hills, MI":  { s: 42.620, w: -83.220, n: 42.730, e: -83.080 },
+  "Clinton Township, MI": { s: 42.540, w: -82.960, n: 42.650, e: -82.820 },
+  "Novi, MI":             { s: 42.430, w: -83.535, n: 42.535, e: -83.405 },
+  "Pontiac, MI":          { s: 42.610, w: -83.330, n: 42.690, e: -83.220 },
+  "Royal Oak, MI":        { s: 42.460, w: -83.180, n: 42.530, e: -83.090 },
+  "Taylor, MI":           { s: 42.190, w: -83.330, n: 42.270, e: -83.220 },
+  "Waterford, MI":        { s: 42.610, w: -83.470, n: 42.730, e: -83.300 },
+  "Shelby Township, MI":  { s: 42.620, w: -83.090, n: 42.730, e: -82.940 },
+  "West Bloomfield, MI":  { s: 42.500, w: -83.450, n: 42.610, e: -83.310 },
+};
+
+/** Build an NxN grid of cell centers + radius covering a bounding box. */
+function buildGrid(
+  bbox: { s: number; w: number; n: number; e: number },
+  n: number,
+): Array<{ lat: number; lng: number; radius: number }> {
+  const cells: Array<{ lat: number; lng: number; radius: number }> = [];
+  const latStep = (bbox.n - bbox.s) / n;
+  const lngStep = (bbox.e - bbox.w) / n;
+  // Cell half-diagonal in meters → use as radius (with 30% padding for overlap)
+  const midLat = (bbox.n + bbox.s) / 2;
+  const latMeters = latStep * 111_111;
+  const lngMeters = lngStep * 111_111 * Math.cos((midLat * Math.PI) / 180);
+  const halfDiag = Math.sqrt(latMeters * latMeters + lngMeters * lngMeters) / 2;
+  const radius = Math.min(40000, Math.round(halfDiag * 1.3));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      cells.push({
+        lat: bbox.s + latStep * (i + 0.5),
+        lng: bbox.w + lngStep * (j + 0.5),
+        radius,
+      });
+    }
+  }
+  return cells;
+}
+
 async function yelpSearch(
   apiKey: string,
   params: Record<string, string>,
