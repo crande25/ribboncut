@@ -21,6 +21,57 @@ const SE_MICHIGAN_CITIES = [
   "Shelby Township, MI", "Waterford, MI",
 ];
 
+// Bounding boxes (south, west, north, east) for dense cities. Slightly padded.
+// Used by the grid harvest mode to slice the city into many small geographic
+// cells so each cell can be queried independently against Yelp's per-query 1000 cap.
+const CITY_BBOXES: Record<string, { s: number; w: number; n: number; e: number }> = {
+  "Detroit, MI":          { s: 42.255, w: -83.288, n: 42.450, e: -82.910 },
+  "Warren, MI":           { s: 42.450, w: -83.080, n: 42.560, e: -82.930 },
+  "Southfield, MI":       { s: 42.430, w: -83.310, n: 42.530, e: -83.190 },
+  "Sterling Heights, MI": { s: 42.530, w: -83.080, n: 42.660, e: -82.940 },
+  "Livonia, MI":          { s: 42.350, w: -83.430, n: 42.450, e: -83.290 },
+  "Ann Arbor, MI":        { s: 42.220, w: -83.820, n: 42.330, e: -83.660 },
+  "Canton, MI":           { s: 42.260, w: -83.555, n: 42.355, e: -83.420 },
+  "Dearborn, MI":         { s: 42.270, w: -83.310, n: 42.355, e: -83.140 },
+  "Troy, MI":             { s: 42.530, w: -83.220, n: 42.640, e: -83.080 },
+  "Farmington Hills, MI": { s: 42.430, w: -83.450, n: 42.530, e: -83.330 },
+  "Rochester Hills, MI":  { s: 42.620, w: -83.220, n: 42.730, e: -83.080 },
+  "Clinton Township, MI": { s: 42.540, w: -82.960, n: 42.650, e: -82.820 },
+  "Novi, MI":             { s: 42.430, w: -83.535, n: 42.535, e: -83.405 },
+  "Pontiac, MI":          { s: 42.610, w: -83.330, n: 42.690, e: -83.220 },
+  "Royal Oak, MI":        { s: 42.460, w: -83.180, n: 42.530, e: -83.090 },
+  "Taylor, MI":           { s: 42.190, w: -83.330, n: 42.270, e: -83.220 },
+  "Waterford, MI":        { s: 42.610, w: -83.470, n: 42.730, e: -83.300 },
+  "Shelby Township, MI":  { s: 42.620, w: -83.090, n: 42.730, e: -82.940 },
+  "West Bloomfield, MI":  { s: 42.500, w: -83.450, n: 42.610, e: -83.310 },
+};
+
+/** Build an NxN grid of cell centers + radius covering a bounding box. */
+function buildGrid(
+  bbox: { s: number; w: number; n: number; e: number },
+  n: number,
+): Array<{ lat: number; lng: number; radius: number }> {
+  const cells: Array<{ lat: number; lng: number; radius: number }> = [];
+  const latStep = (bbox.n - bbox.s) / n;
+  const lngStep = (bbox.e - bbox.w) / n;
+  // Cell half-diagonal in meters → use as radius (with 30% padding for overlap)
+  const midLat = (bbox.n + bbox.s) / 2;
+  const latMeters = latStep * 111_111;
+  const lngMeters = lngStep * 111_111 * Math.cos((midLat * Math.PI) / 180);
+  const halfDiag = Math.sqrt(latMeters * latMeters + lngMeters * lngMeters) / 2;
+  const radius = Math.min(40000, Math.round(halfDiag * 1.3));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      cells.push({
+        lat: bbox.s + latStep * (i + 0.5),
+        lng: bbox.w + lngStep * (j + 0.5),
+        radius,
+      });
+    }
+  }
+  return cells;
+}
+
 async function yelpSearch(
   apiKey: string,
   params: Record<string, string>,
@@ -148,6 +199,88 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify(results), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // === GRID === geographic lat/lng slicing to bypass Yelp's per-query 1000 cap.
+    // Each grid cell is queried as an independent latitude/longitude+radius search,
+    // optionally multiplied by price tiers. With no `cell` index, returns the plan.
+    if (mode === "grid") {
+      const gridCity = body.city;
+      if (!gridCity) {
+        return new Response(JSON.stringify({ error: "city required for grid mode" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const bbox = CITY_BBOXES[gridCity];
+      if (!bbox) {
+        return new Response(JSON.stringify({
+          error: `No bounding box defined for "${gridCity}"`,
+          available_cities: Object.keys(CITY_BBOXES),
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const gridSize = Math.max(2, Math.min(8, Number(body.gridSize) || 4));
+      const withPrices = Boolean(body.withPrices);
+      const cells = buildGrid(bbox, gridSize);
+
+      // Plan mode: return list of invocations to run
+      if (body.cell === undefined || body.cell === null) {
+        const plan: any[] = [];
+        for (let i = 0; i < cells.length; i++) {
+          if (withPrices) {
+            for (const p of PRICE_TIERS) plan.push({ cell: i, price: p });
+            plan.push({ cell: i, price: "none" });
+          } else {
+            plan.push({ cell: i });
+          }
+        }
+        return new Response(JSON.stringify({
+          city: gridCity, mode: "grid", gridSize, withPrices,
+          total_cells: cells.length,
+          total_invocations: plan.length,
+          cells,
+          plan,
+          example: { mode: "grid", city: gridCity, gridSize, withPrices, cell: 0 },
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Execute one cell (optionally one price tier)
+      const cellIdx = Number(body.cell);
+      if (!Number.isFinite(cellIdx) || cellIdx < 0 || cellIdx >= cells.length) {
+        return new Response(JSON.stringify({ error: `Invalid cell index ${body.cell}` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const c = cells[cellIdx];
+      const supabaseGrid = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+      const { data: existingRowsGrid } = await supabaseGrid
+        .from("restaurant_sightings")
+        .select("yelp_id")
+        .eq("city", gridCity);
+      const existingIdsGrid = new Set((existingRowsGrid || []).map((r: any) => r.yelp_id));
+
+      const cellIds = new Set<string>();
+      const baseParams: Record<string, string> = {
+        latitude: String(c.lat),
+        longitude: String(c.lng),
+        radius: String(c.radius),
+        categories: "restaurants",
+        sort_by: "best_match",
+      };
+      if (body.price && body.price !== "none") baseParams.price = String(body.price);
+
+      const queries = await paginateQuery(YELP_API_KEY, baseParams, cellIds);
+      const allIds = [...cellIds];
+      const { newCount, dbErrors } = await persistIds(supabaseGrid, allIds, gridCity, existingIdsGrid);
+
+      return new Response(JSON.stringify({
+        success: true, city: gridCity, mode: "grid", cell: cellIdx,
+        cell_center: { lat: c.lat, lng: c.lng, radius: c.radius },
+        price: body.price || "all",
+        unique_ids_in_cell: cellIds.size,
+        new_to_db: newCount,
+        queries,
+        db_errors: dbErrors,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // === HARVEST ===
