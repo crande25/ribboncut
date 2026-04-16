@@ -1,0 +1,1 @@
+ALTER TABLE public.restaurant_sightings ADD COLUMN is_new_discovery boolean NOT NULL DEFAULT false;
