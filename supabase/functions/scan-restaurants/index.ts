@@ -237,6 +237,69 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Backfill: generate atmosphere for DB-tracked restaurants not seen in this scan
+    if (LOVABLE_API_KEY && YELP_API_KEY) {
+      const scannedCities = citiesToScan;
+      for (const city of scannedCities) {
+        // Find sightings in this city that still lack atmosphere cache
+        const { data: uncachedSightings } = await supabase
+          .from("restaurant_sightings")
+          .select("yelp_id")
+          .eq("city", city)
+          .not("yelp_id", "in", `(${Array.from(newYelpIds.map(r => r.yelp_id)).join(",")})`)
+
+        if (!uncachedSightings || uncachedSightings.length === 0) continue;
+
+        const sightingIds = uncachedSightings.map((s: any) => s.yelp_id);
+        const { data: alreadyCached } = await supabase
+          .from("atmosphere_cache")
+          .select("yelp_id")
+          .in("yelp_id", sightingIds);
+
+        const cachedSet = new Set((alreadyCached || []).map((e: any) => e.yelp_id));
+        const toBackfill = sightingIds.filter((id: string) => !cachedSet.has(id));
+
+        if (toBackfill.length === 0) continue;
+        console.log(`Backfilling ${toBackfill.length} restaurants in ${city} not in scan results`);
+
+        for (const yelpId of toBackfill) {
+          try {
+            // Fetch individual business details from Yelp
+            const bizRes = await fetch(`${YELP_API_URL}/businesses/${yelpId}`, {
+              headers: { Authorization: `Bearer ${YELP_API_KEY}`, Accept: "application/json" },
+            });
+            if (!bizRes.ok) { console.error(`Yelp detail error for ${yelpId}: ${bizRes.status}`); continue; }
+            const biz = await bizRes.json();
+
+            const name = biz.name || yelpId;
+            const categories = (biz.categories || []).map((c: any) => c.title).join(", ");
+            const price = biz.price || null;
+            const rating = biz.rating || null;
+
+            let reviewTexts: string[] = [];
+            if (GOOGLE_PLACES_API_KEY) {
+              reviewTexts = await fetchGoogleReviews(name, city, GOOGLE_PLACES_API_KEY);
+            }
+
+            const summary = await generateAtmosphereSummary(
+              name, categories, price, rating, city, reviewTexts, LOVABLE_API_KEY,
+            );
+
+            if (summary) {
+              const { error: cacheError } = await supabase
+                .from("atmosphere_cache")
+                .upsert({ yelp_id: yelpId, atmosphere_summary: summary }, { onConflict: "yelp_id" });
+              if (cacheError) console.error(`Backfill cache error for ${yelpId}:`, cacheError.message);
+            }
+
+            await new Promise((r) => setTimeout(r, 300));
+          } catch (err) {
+            console.error(`Backfill error for ${yelpId}:`, err);
+          }
+        }
+      }
+    }
+
     return new Response(
       JSON.stringify({ success: true, results }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
