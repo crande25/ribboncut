@@ -7,7 +7,7 @@ const corsHeaders = {
 
 const YELP_API_URL = "https://api.yelp.com/v3";
 const YELP_PAGE_LIMIT = 50;
-const YELP_MAX_RESULTS = 240;
+const YELP_MAX_RESULTS = 1000;
 const PRICE_TIERS = ["1", "2", "3", "4"];
 const CATEGORIES = ["restaurants", "food", "bars", "coffee"];
 
