@@ -85,7 +85,7 @@ function buildGrid(
 async function yelpSearch(
   apiKey: string,
   params: Record<string, string>,
-): Promise<{ businesses: any[]; total: number }> {
+): Promise<{ businesses: any[]; total: number; rateLimited?: boolean; status?: number }> {
   const searchParams = new URLSearchParams(params);
   const res = await fetch(`${YELP_API_URL}/businesses/search?${searchParams}`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
@@ -93,10 +93,10 @@ async function yelpSearch(
   if (!res.ok) {
     const body = await res.text();
     console.error(`Yelp error [${res.status}]: ${body}`);
-    return { businesses: [], total: 0 };
+    return { businesses: [], total: 0, rateLimited: res.status === 429, status: res.status };
   }
   const data = await res.json();
-  return { businesses: data.businesses || [], total: data.total || 0 };
+  return { businesses: data.businesses || [], total: data.total || 0, status: 200 };
 }
 
 /** Paginate a single query, collecting up to 240 results */
