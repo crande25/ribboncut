@@ -220,6 +220,96 @@ Deno.serve(async (req) => {
       });
     }
 
+    // === HOT AND NEW ===
+    // For each SE Michigan city (or a provided list), walk Yelp's hot_and_new
+    // attribute up to the 240-result reachable cap. Insert any unseen yelp_ids
+    // into restaurant_sightings; existing rows are left untouched (preserving
+    // their original first_seen_at). New rows surface naturally via get-restaurants.
+    if (mode === "hot-and-new" || mode === "hot_and_new") {
+      const supabaseHN = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const cities: string[] = body.cities || SE_MICHIGAN_CITIES;
+      const HN_CAP = 240;
+      const results: any[] = [];
+
+      for (const city of cities) {
+        const seen = new Set<string>();
+        let queries = 0;
+        let offset = 0;
+        let total = 0;
+        let rateLimited = false;
+
+        while (offset < HN_CAP) {
+          const limit = Math.min(YELP_PAGE_LIMIT, HN_CAP - offset);
+          const { businesses, total: t, rateLimited: rl } = await yelpSearch(pool, {
+            location: city,
+            categories: "restaurants",
+            attributes: "hot_and_new",
+            limit: String(limit),
+            offset: String(offset),
+          });
+          queries++;
+          total = t;
+          if (rl) { rateLimited = true; break; }
+          if (businesses.length === 0) break;
+          for (const biz of businesses) seen.add(biz.id);
+          offset += businesses.length;
+          if (offset >= Math.min(total, HN_CAP)) break;
+          await new Promise((r) => setTimeout(r, 80));
+        }
+
+        const ids = [...seen];
+        let newlyInserted = 0;
+        let dbErrors = 0;
+
+        if (ids.length > 0) {
+          // Find which yelp_ids already exist (any city) so we can report newly_inserted.
+          const { data: existingRows } = await supabaseHN
+            .from("restaurant_sightings")
+            .select("yelp_id")
+            .in("yelp_id", ids);
+          const existing = new Set((existingRows || []).map((r: any) => r.yelp_id));
+
+          const rows = ids.map((id) => ({
+            yelp_id: id,
+            city,
+            // first_seen_at omitted → DB default now() applies on INSERT.
+            // ON CONFLICT DO NOTHING preserves the original first_seen_at.
+            is_new_discovery: true,
+          }));
+
+          for (let i = 0; i < rows.length; i += 500) {
+            const chunk = rows.slice(i, i + 500);
+            const { error } = await supabaseHN
+              .from("restaurant_sightings")
+              .upsert(chunk, { onConflict: "yelp_id", ignoreDuplicates: true });
+            if (error) { console.error(`[hot-and-new] DB upsert error for ${city}:`, error.message); dbErrors++; }
+          }
+
+          newlyInserted = ids.filter((id) => !existing.has(id)).length;
+        }
+
+        console.log(`[hot-and-new] ${city}: scanned=${ids.length} newly_inserted=${newlyInserted} total_reported=${total} queries=${queries}${rateLimited ? " RATE_LIMITED" : ""}`);
+        results.push({
+          city,
+          scanned: ids.length,
+          newly_inserted: newlyInserted,
+          total_reported_by_yelp: total,
+          queries,
+          db_errors: dbErrors,
+          rate_limited: rateLimited,
+        });
+
+        if (rateLimited) break;
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        mode: "hot-and-new",
+        cities_processed: results.length,
+        results,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // === PROBE ===
     if (mode === "probe") {
       const cities = body.cities || SE_MICHIGAN_CITIES;
