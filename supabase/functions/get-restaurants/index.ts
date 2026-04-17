@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { YelpKeyPool } from "./yelpKeys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,11 +14,10 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!YELP_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return new Response(
         JSON.stringify({ error: "Missing required environment variables" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -25,6 +25,18 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Init Yelp key pool (rotates across YELP_API_KEY, YELP_API_KEY_2, ...)
+    const pool = new YelpKeyPool(supabase);
+    try {
+      await pool.load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load Yelp keys";
+      return new Response(
+        JSON.stringify({ error: msg }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const url = new URL(req.url);
     const openedSince = url.searchParams.get("opened_since");
@@ -94,26 +106,22 @@ Deno.serve(async (req) => {
       atmosphereMap.set(row.yelp_id, row.atmosphere_summary);
     }
 
-    // Fetch live Yelp details for each sighting
+    // Fetch live Yelp details for each sighting via the rotating key pool
     const restaurants = await Promise.all(
       sightings.map(async (sighting: any) => {
         try {
-          const detailRes = await fetch(
-            `${YELP_API_URL}/businesses/${sighting.yelp_id}`,
-            {
-              headers: {
-                Authorization: `Bearer ${YELP_API_KEY}`,
-                Accept: "application/json",
-              },
-            }
-          );
+          const detailRes = await pool.fetch(`${YELP_API_URL}/businesses/${sighting.yelp_id}`);
 
           if (!detailRes.ok) {
-            console.error(`Yelp detail error for ${sighting.yelp_id}: ${detailRes.status}`);
+            if (detailRes.exhaustedAllKeys) {
+              console.error(`Yelp ALL KEYS EXHAUSTED while fetching ${sighting.yelp_id}`);
+            } else {
+              console.error(`Yelp detail error for ${sighting.yelp_id}: status=${detailRes.status} key=${detailRes.keyName}`);
+            }
             return null;
           }
 
-          const biz = await detailRes.json();
+          const biz = detailRes.body;
 
           if (dietaryCategories) {
             const filters = dietaryCategories.split(",").map((c) => c.trim().toLowerCase());
