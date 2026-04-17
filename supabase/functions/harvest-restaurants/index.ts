@@ -103,7 +103,7 @@ async function yelpSearch(
 
 /** Paginate a single query, collecting up to 240 results */
 async function paginateQuery(
-  apiKey: string,
+  pool: YelpKeyPool,
   baseParams: Record<string, string>,
   ids: Set<string>,
 ): Promise<number> {
@@ -111,7 +111,7 @@ async function paginateQuery(
   let offset = 0;
   while (offset < YELP_MAX_RESULTS) {
     const params = { ...baseParams, limit: String(YELP_PAGE_LIMIT), offset: String(offset) };
-    const { businesses, total } = await yelpSearch(apiKey, params);
+    const { businesses, total } = await yelpSearch(pool, params);
     queriesMade++;
     if (businesses.length === 0) break;
     for (const biz of businesses) ids.add(biz.id);
@@ -123,17 +123,17 @@ async function paginateQuery(
 }
 
 /** Probe price tiers */
-async function probePriceTiers(apiKey: string, location: string) {
+async function probePriceTiers(pool: YelpKeyPool, location: string) {
   const totals: Record<string, number> = {};
   let needsPhase2 = false;
   for (const price of PRICE_TIERS) {
-    const { total } = await yelpSearch(apiKey, {
+    const { total } = await yelpSearch(pool, {
       location, categories: "restaurants", price, limit: "1", offset: "0",
     });
     totals[`${"$".repeat(Number(price))}`] = total;
     if (total > YELP_MAX_RESULTS) needsPhase2 = true;
   }
-  const { total: allTotal } = await yelpSearch(apiKey, {
+  const { total: allTotal } = await yelpSearch(pool, {
     location, categories: "restaurants", limit: "1", offset: "0",
   });
   const pricedSum = Object.values(totals).reduce((a, b) => a + b, 0);
