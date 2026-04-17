@@ -85,7 +85,7 @@ function buildGrid(
 async function yelpSearch(
   apiKey: string,
   params: Record<string, string>,
-): Promise<{ businesses: any[]; total: number }> {
+): Promise<{ businesses: any[]; total: number; rateLimited?: boolean; status?: number }> {
   const searchParams = new URLSearchParams(params);
   const res = await fetch(`${YELP_API_URL}/businesses/search?${searchParams}`, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
@@ -93,10 +93,10 @@ async function yelpSearch(
   if (!res.ok) {
     const body = await res.text();
     console.error(`Yelp error [${res.status}]: ${body}`);
-    return { businesses: [], total: 0 };
+    return { businesses: [], total: 0, rateLimited: res.status === 429, status: res.status };
   }
   const data = await res.json();
-  return { businesses: data.businesses || [], total: data.total || 0 };
+  return { businesses: data.businesses || [], total: data.total || 0, status: 200 };
 }
 
 /** Paginate a single query, collecting up to 240 results */
@@ -363,33 +363,83 @@ Deno.serve(async (req) => {
       };
       if (body.price && body.price !== "none") baseParams.price = String(body.price);
 
-      // First, probe total to know where the tail starts
+      // First, probe total to know where the tail starts.
       const probe = await yelpSearch(YELP_API_KEY, { ...baseParams, limit: "1", offset: "0" });
-      const total = Math.min(probe.total, YELP_MAX_RESULTS);
+      const reportedTotal = probe.total;
+      const total = Math.min(reportedTotal, YELP_MAX_RESULTS);
       const tailIds = new Set<string>();
       let queries = 1;
       let lowestReviewCount = Number.POSITIVE_INFINITY;
       let highestReviewCount = 0;
+      const debugPages: any[] = [];
+      const sliceTag = `tail[${tailCity} c${cellIdx} p=${body.price || "all"} cat=${body.category || "restaurants"}]`;
+
+      console.log(`${sliceTag} probe.total=${reportedTotal} clamped=${total} status=${probe.status}`);
+
+      // Surface rate-limit explicitly so callers don't mistake throttling for empty slices.
+      if (probe.rateLimited) {
+        console.warn(`${sliceTag} RATE LIMITED on probe`);
+        return new Response(JSON.stringify({
+          success: false, rate_limited: true, city: tailCity, mode: "tail", cell: cellIdx,
+          price: body.price || "all", category: body.category || "restaurants",
+          message: "Yelp returned 429 ACCESS_LIMIT_REACHED on probe. Daily quota exhausted.",
+        }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
 
       if (total === 0) {
+        console.log(`${sliceTag} EMPTY slice (probe returned 0)`);
         return new Response(JSON.stringify({
           success: true, city: tailCity, mode: "tail", cell: cellIdx,
           price: body.price || "all", category: body.category || "restaurants",
           slice_total: 0, unique_ids: 0, new_to_db: 0, queries,
+          debug: { reported_total: reportedTotal, pages: [] },
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Compute starting offset for the tail
+      // Compute starting offset for the tail. If the slice is small (< desired fetch),
+      // start at 0 and walk through everything.
       const desiredFetch = tailPages * YELP_PAGE_LIMIT;
-      const startOffset = Math.max(0, total - desiredFetch);
+      let startOffset = Math.max(0, total - desiredFetch);
       // Align to page boundary
-      const alignedStart = Math.floor(startOffset / YELP_PAGE_LIMIT) * YELP_PAGE_LIMIT;
+      let alignedStart = Math.floor(startOffset / YELP_PAGE_LIMIT) * YELP_PAGE_LIMIT;
 
-      for (let offset = alignedStart; offset < total; offset += YELP_PAGE_LIMIT) {
+      // Yelp can report a `total` that exceeds what is actually paginatable. If our
+      // computed start returns empty, walk DOWN by one page at a time until we hit data.
+      // This is the "fall back to progressively lower offsets" behavior.
+      let actualStart = alignedStart;
+      while (actualStart > 0) {
+        const probeParams = { ...baseParams, limit: String(YELP_PAGE_LIMIT), offset: String(actualStart) };
+        const r = await yelpSearch(YELP_API_KEY, probeParams);
+        queries++;
+        debugPages.push({ offset: actualStart, returned: r.businesses.length, phase: "probe-tail-start" });
+        console.log(`${sliceTag} probe-tail-start offset=${actualStart} returned=${r.businesses.length}`);
+        if (r.businesses.length > 0) {
+          // Found a non-empty page: ingest and break out to forward walk
+          for (const biz of r.businesses) {
+            tailIds.add(biz.id);
+            const rc = Number(biz.review_count) || 0;
+            if (rc < lowestReviewCount) lowestReviewCount = rc;
+            if (rc > highestReviewCount) highestReviewCount = rc;
+          }
+          // Continue from the NEXT page after this one
+          actualStart += r.businesses.length;
+          break;
+        }
+        // Empty: step down one page and retry
+        actualStart = Math.max(0, actualStart - YELP_PAGE_LIMIT);
+        await new Promise((r) => setTimeout(r, 80));
+      }
+
+      // Now walk forward collecting remaining pages until empty or we hit the cap.
+      for (let offset = actualStart; offset < YELP_MAX_RESULTS; offset += YELP_PAGE_LIMIT) {
         const params = { ...baseParams, limit: String(YELP_PAGE_LIMIT), offset: String(offset) };
         const { businesses } = await yelpSearch(YELP_API_KEY, params);
         queries++;
-        if (businesses.length === 0) break;
+        debugPages.push({ offset, returned: businesses.length, phase: "forward" });
+        if (businesses.length === 0) {
+          console.log(`${sliceTag} forward offset=${offset} EMPTY — stopping`);
+          break;
+        }
         for (const biz of businesses) {
           tailIds.add(biz.id);
           const rc = Number(biz.review_count) || 0;
@@ -398,6 +448,8 @@ Deno.serve(async (req) => {
         }
         await new Promise((r) => setTimeout(r, 80));
       }
+
+      console.log(`${sliceTag} done unique=${tailIds.size} low=${lowestReviewCount === Number.POSITIVE_INFINITY ? "n/a" : lowestReviewCount} high=${highestReviewCount} queries=${queries}`);
 
       const allIds = [...tailIds];
       const { newCount, dbErrors } = await persistIds(supabaseTail, allIds, tailCity, existingIdsTail);
@@ -408,13 +460,16 @@ Deno.serve(async (req) => {
         price: body.price || "all",
         category: body.category || "restaurants",
         slice_total: total,
-        tail_start_offset: alignedStart,
+        reported_total: reportedTotal,
+        tail_start_offset_planned: alignedStart,
+        tail_start_offset_actual: actualStart,
         unique_ids: tailIds.size,
         new_to_db: newCount,
         lowest_review_count: lowestReviewCount === Number.POSITIVE_INFINITY ? null : lowestReviewCount,
         highest_review_count: highestReviewCount,
         queries,
         db_errors: dbErrors,
+        debug_pages: debugPages,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
