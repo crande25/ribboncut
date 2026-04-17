@@ -118,7 +118,7 @@ export class YelpKeyPool {
       },
       { onConflict: "key_name" },
     );
-    if (error) console.error(`[YelpKeyPool] failed to persist exhaustion:`, error.message);
+    if (error) console.error(`[YelpKeyPool] failed to persist exhaustion for ${keyName}:`, error.message);
   }
 
   /** Get the first non-exhausted key, or null if all are exhausted. */
@@ -148,6 +148,7 @@ export class YelpKeyPool {
         const body = await res.text();
         console.warn(`[YelpKeyPool] ${key.name} got ${res.status}: ${body.slice(0, 200)}`);
         await this.markExhausted(key.name, res.status, body);
+        console.log(`[YelpKeyPool] rotating: will try next available key`);
         continue; // try next key
       }
 
@@ -160,6 +161,7 @@ export class YelpKeyPool {
       }
 
       const data = await res.json();
+      console.log(`[YelpKeyPool] success: ${key.name} served request`);
       return {
         ok: true, status: 200, body: data,
         rateLimited: false, authError: false, keyName: key.name,
