@@ -300,7 +300,7 @@ Deno.serve(async (req) => {
       };
       if (body.price && body.price !== "none") baseParams.price = String(body.price);
 
-      const queries = await paginateQuery(YELP_API_KEY, baseParams, cellIds);
+      const queries = await paginateQuery(pool, baseParams, cellIds);
       const allIds = [...cellIds];
       const { newCount, dbErrors } = await persistIds(supabaseGrid, allIds, gridCity, existingIdsGrid);
 
@@ -386,7 +386,7 @@ Deno.serve(async (req) => {
       if (body.price && body.price !== "none") baseParams.price = String(body.price);
 
       // First, probe total to know where the tail starts.
-      const probe = await yelpSearch(YELP_API_KEY, { ...baseParams, limit: "1", offset: "0" });
+      const probe = await yelpSearch(pool, { ...baseParams, limit: "1", offset: "0" });
       const reportedTotal = probe.total;
       const total = Math.min(reportedTotal, YELP_MAX_RESULTS);
       const tailIds = new Set<string>();
@@ -431,7 +431,7 @@ Deno.serve(async (req) => {
       let actualStart = alignedStart;
       while (actualStart > 0) {
         const probeParams = { ...baseParams, limit: String(YELP_PAGE_LIMIT), offset: String(actualStart) };
-        const r = await yelpSearch(YELP_API_KEY, probeParams);
+        const r = await yelpSearch(pool, probeParams);
         queries++;
         debugPages.push({ offset: actualStart, returned: r.businesses.length, phase: "probe-tail-start" });
         console.log(`${sliceTag} probe-tail-start offset=${actualStart} returned=${r.businesses.length}`);
@@ -455,7 +455,7 @@ Deno.serve(async (req) => {
       // Now walk forward collecting remaining pages until empty or we hit the cap.
       for (let offset = actualStart; offset < YELP_MAX_RESULTS; offset += YELP_PAGE_LIMIT) {
         const params = { ...baseParams, limit: String(YELP_PAGE_LIMIT), offset: String(offset) };
-        const { businesses } = await yelpSearch(YELP_API_KEY, params);
+        const { businesses } = await yelpSearch(pool, params);
         queries++;
         debugPages.push({ offset, returned: businesses.length, phase: "forward" });
         if (businesses.length === 0) {
@@ -522,16 +522,16 @@ Deno.serve(async (req) => {
     const existingIds = new Set((existingRows || []).map((r: any) => r.yelp_id));
 
     // Probe first
-    const { totals, needsPhase2 } = await probePriceTiers(YELP_API_KEY, city);
+    const { totals, needsPhase2 } = await probePriceTiers(pool, city);
 
     // If Phase 1 is enough, just do it all
     if (!needsPhase2) {
       const cityIds = new Set<string>();
       let q = 0;
       for (const price of PRICE_TIERS) {
-        q += await paginateQuery(YELP_API_KEY, { location: city, categories: "restaurants", price, sort_by: "best_match" }, cityIds);
+        q += await paginateQuery(pool, { location: city, categories: "restaurants", price, sort_by: "best_match" }, cityIds);
       }
-      q += await paginateQuery(YELP_API_KEY, { location: city, categories: "restaurants", sort_by: "best_match" }, cityIds);
+      q += await paginateQuery(pool, { location: city, categories: "restaurants", sort_by: "best_match" }, cityIds);
 
       const allIds = [...cityIds];
       const { newCount, dbErrors } = await persistIds(supabase, allIds, city, existingIds);
@@ -581,7 +581,7 @@ Deno.serve(async (req) => {
       baseParams.price = slice.price;
     }
 
-    const q = await paginateQuery(YELP_API_KEY, baseParams, cityIds);
+    const q = await paginateQuery(pool, baseParams, cityIds);
     const allIds = [...cityIds];
     const { newCount, dbErrors } = await persistIds(supabase, allIds, city, existingIds);
 
