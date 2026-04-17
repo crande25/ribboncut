@@ -84,20 +84,21 @@ function buildGrid(
 }
 
 async function yelpSearch(
-  apiKey: string,
+  pool: YelpKeyPool,
   params: Record<string, string>,
-): Promise<{ businesses: any[]; total: number; rateLimited?: boolean; status?: number }> {
+): Promise<{ businesses: any[]; total: number; rateLimited?: boolean; status?: number; keyName?: string }> {
   const searchParams = new URLSearchParams(params);
-  const res = await fetch(`${YELP_API_URL}/businesses/search?${searchParams}`, {
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    console.error(`Yelp error [${res.status}]: ${body}`);
-    return { businesses: [], total: 0, rateLimited: res.status === 429, status: res.status };
+  const result = await pool.fetch(`${YELP_API_URL}/businesses/search?${searchParams}`);
+  if (!result.ok) {
+    if (result.exhaustedAllKeys) {
+      console.error(`Yelp ALL KEYS EXHAUSTED`);
+      return { businesses: [], total: 0, rateLimited: true, status: 429, keyName: result.keyName };
+    }
+    console.error(`Yelp error [${result.status}] key=${result.keyName}: ${typeof result.body === "string" ? result.body : JSON.stringify(result.body)}`);
+    return { businesses: [], total: 0, rateLimited: result.rateLimited, status: result.status, keyName: result.keyName };
   }
-  const data = await res.json();
-  return { businesses: data.businesses || [], total: data.total || 0, status: 200 };
+  const data = result.body;
+  return { businesses: data.businesses || [], total: data.total || 0, status: 200, keyName: result.keyName };
 }
 
 /** Paginate a single query, collecting up to 240 results */
