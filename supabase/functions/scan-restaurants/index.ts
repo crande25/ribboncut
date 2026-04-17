@@ -299,7 +299,7 @@ Deno.serve(async (req) => {
     }
 
     // Backfill: generate atmosphere for DB-tracked restaurants not seen in this scan
-    if (LOVABLE_API_KEY && YELP_API_KEY) {
+    if (LOVABLE_API_KEY && !allKeysExhausted) {
       const scannedCities = citiesToScan;
       for (const city of scannedCities) {
         // Find sightings in this city that still lack atmosphere cache
@@ -324,13 +324,20 @@ Deno.serve(async (req) => {
         console.log(`Backfilling ${toBackfill.length} restaurants in ${city} not in scan results`);
 
         for (const yelpId of toBackfill) {
+          if (allKeysExhausted) break;
           try {
-            // Fetch individual business details from Yelp
-            const bizRes = await fetch(`${YELP_API_URL}/businesses/${yelpId}`, {
-              headers: { Authorization: `Bearer ${YELP_API_KEY}`, Accept: "application/json" },
-            });
-            if (!bizRes.ok) { console.error(`Yelp detail error for ${yelpId}: ${bizRes.status}`); continue; }
-            const biz = await bizRes.json();
+            // Fetch individual business details from Yelp via the rotating key pool
+            const bizRes = await pool.fetch(`${YELP_API_URL}/businesses/${yelpId}`);
+            if (!bizRes.ok) {
+              if (bizRes.exhaustedAllKeys) {
+                console.error(`Yelp ALL KEYS EXHAUSTED during backfill of ${yelpId}`);
+                allKeysExhausted = true;
+                break;
+              }
+              console.error(`Yelp detail error for ${yelpId}: status=${bizRes.status} key=${bizRes.keyName}`);
+              continue;
+            }
+            const biz = bizRes.body;
 
             const name = biz.name || yelpId;
             const categories = (biz.categories || []).map((c: any) => c.title).join(", ");
