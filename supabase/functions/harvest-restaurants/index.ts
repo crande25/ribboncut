@@ -495,6 +495,140 @@ Deno.serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // === DISCOVER === Progressive offset fallback to find ONE new restaurant per city
+    // with the LEAST reviews. Strategy:
+    //   1. Probe total for the city (sort_by=review_count is desc; the tail is least-reviewed).
+    //   2. Start at the last reachable page and walk DOWN (toward more-reviewed) one page
+    //      at a time, scanning each page for the first yelp_id not in restaurant_sightings.
+    //   3. Stop and return as soon as a new id is found, or after the page budget is hit.
+    // Stateless: always restarts from the tail. Relies on dedup via restaurant_sightings.
+    if (mode === "discover") {
+      const discoverCities: string[] = body.cities || (body.city ? [body.city] : SE_MICHIGAN_CITIES);
+      const maxPagesPerCity = Math.max(1, Math.min(20, Number(body.maxPages) || 5));
+      const category = String(body.category || "restaurants");
+      const supabaseDisc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const results: any[] = [];
+      let allKeysExhausted = false;
+
+      for (const dCity of discoverCities) {
+        if (allKeysExhausted) {
+          results.push({ city: dCity, skipped: true, reason: "all_keys_exhausted" });
+          continue;
+        }
+
+        // Pull existing yelp_ids for dedup
+        const { data: existRows } = await supabaseDisc
+          .from("restaurant_sightings")
+          .select("yelp_id")
+          .eq("city", dCity);
+        const existing = new Set((existRows || []).map((r: any) => r.yelp_id));
+
+        const baseParams: Record<string, string> = {
+          location: dCity,
+          categories: category,
+          sort_by: "review_count", // Yelp: desc only — tail = least reviewed
+        };
+
+        // Probe to learn the total (capped at Yelp's 1000 reachable)
+        const probe = await yelpSearch(pool, { ...baseParams, limit: "1", offset: "0" });
+        if (probe.rateLimited) {
+          allKeysExhausted = true;
+          results.push({ city: dCity, rate_limited: true, status: probe.status });
+          continue;
+        }
+        const reportedTotal = probe.total;
+        const total = Math.min(reportedTotal, YELP_MAX_RESULTS);
+        if (total === 0) {
+          results.push({ city: dCity, reported_total: 0, found: null, queries: 1 });
+          continue;
+        }
+
+        // Start at the last reachable page boundary
+        let offset = Math.floor((total - 1) / YELP_PAGE_LIMIT) * YELP_PAGE_LIMIT;
+        let queries = 1;
+        let found: any = null;
+        let pagesWalked = 0;
+        const visitedOffsets: number[] = [];
+        const tag = `discover[${dCity}]`;
+
+        while (offset >= 0 && pagesWalked < maxPagesPerCity) {
+          const page = await yelpSearch(pool, {
+            ...baseParams, limit: String(YELP_PAGE_LIMIT), offset: String(offset),
+          });
+          queries++;
+          pagesWalked++;
+          visitedOffsets.push(offset);
+
+          if (page.rateLimited) {
+            console.warn(`${tag} RATE LIMITED at offset=${offset}`);
+            allKeysExhausted = true;
+            break;
+          }
+
+          console.log(`${tag} offset=${offset} returned=${page.businesses.length}`);
+
+          // Walk businesses from END of page (lowest review_count first since desc sort)
+          for (let i = page.businesses.length - 1; i >= 0; i--) {
+            const biz = page.businesses[i];
+            if (!existing.has(biz.id)) {
+              found = {
+                yelp_id: biz.id,
+                name: biz.name,
+                review_count: biz.review_count,
+                rating: biz.rating,
+                offset_found_at: offset,
+                index_in_page: i,
+              };
+              break;
+            }
+          }
+          if (found) break;
+          offset -= YELP_PAGE_LIMIT;
+          await new Promise((r) => setTimeout(r, 80));
+        }
+
+        // Persist the find so subsequent runs skip it
+        if (found) {
+          const tenYearsAgo = new Date();
+          tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+          const { error: upErr } = await supabaseDisc
+            .from("restaurant_sightings")
+            .upsert(
+              {
+                yelp_id: found.yelp_id,
+                city: dCity,
+                first_seen_at: new Date().toISOString(),
+                is_new_discovery: true,
+              },
+              { onConflict: "yelp_id", ignoreDuplicates: true },
+            );
+          if (upErr) console.error(`${tag} persist error:`, upErr.message);
+        }
+
+        results.push({
+          city: dCity,
+          reported_total: reportedTotal,
+          reachable_total: total,
+          existing_in_db: existing.size,
+          pages_walked: pagesWalked,
+          visited_offsets: visitedOffsets,
+          queries,
+          found,
+        });
+      }
+
+      return new Response(JSON.stringify({
+        mode: "discover",
+        cities_processed: results.length,
+        all_keys_exhausted: allKeysExhausted,
+        results,
+        yelpKeys: pool.status(),
+      }), {
+        status: allKeysExhausted ? 429 : 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // === HARVEST ===
     const city = body.city;
     if (!city) {
