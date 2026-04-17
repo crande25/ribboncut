@@ -293,6 +293,131 @@ Deno.serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // === TAIL === narrow slices sorted by review_count DESC, paginate to the last
+    // reachable page (offset 950) to capture the lowest-review-count restaurants.
+    // Slice = grid cell × price tier × category. Each slice ideally has <1000 total
+    // results so the tail page actually contains the lowest-reviewed in that slice.
+    if (mode === "tail") {
+      const tailCity = body.city;
+      if (!tailCity) {
+        return new Response(JSON.stringify({ error: "city required for tail mode" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const bbox = CITY_BBOXES[tailCity];
+      if (!bbox) {
+        return new Response(JSON.stringify({
+          error: `No bounding box defined for "${tailCity}"`,
+          available_cities: Object.keys(CITY_BBOXES),
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const gridSize = Math.max(2, Math.min(8, Number(body.gridSize) || 4));
+      const cells = buildGrid(bbox, gridSize);
+      const tailCategories: string[] = body.categories || CATEGORIES;
+      const tailPrices: string[] = body.prices || [...PRICE_TIERS, "none"];
+      // How many pages from the END to fetch per slice (each page = 50 results).
+      // Default 4 pages = 200 lowest-review-count businesses per reachable slice.
+      const tailPages = Math.max(1, Math.min(20, Number(body.tailPages) || 4));
+
+      // Plan mode: enumerate slices
+      if (body.cell === undefined || body.cell === null) {
+        const plan: any[] = [];
+        for (let i = 0; i < cells.length; i++) {
+          for (const p of tailPrices) {
+            for (const cat of tailCategories) {
+              plan.push({ cell: i, price: p, category: cat });
+            }
+          }
+        }
+        return new Response(JSON.stringify({
+          city: tailCity, mode: "tail", gridSize, tailPages,
+          total_cells: cells.length,
+          categories: tailCategories,
+          prices: tailPrices,
+          total_invocations: plan.length,
+          example: { mode: "tail", city: tailCity, gridSize, tailPages, cell: 0, price: "1", category: "restaurants" },
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Execute one slice: cell + price + category, sorted by review_count desc, tail pages
+      const cellIdx = Number(body.cell);
+      if (!Number.isFinite(cellIdx) || cellIdx < 0 || cellIdx >= cells.length) {
+        return new Response(JSON.stringify({ error: `Invalid cell index ${body.cell}` }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const c = cells[cellIdx];
+      const supabaseTail = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+      const { data: existingRowsTail } = await supabaseTail
+        .from("restaurant_sightings")
+        .select("yelp_id")
+        .eq("city", tailCity);
+      const existingIdsTail = new Set((existingRowsTail || []).map((r: any) => r.yelp_id));
+
+      const baseParams: Record<string, string> = {
+        latitude: String(c.lat),
+        longitude: String(c.lng),
+        radius: String(c.radius),
+        categories: String(body.category || "restaurants"),
+        sort_by: "review_count",
+      };
+      if (body.price && body.price !== "none") baseParams.price = String(body.price);
+
+      // First, probe total to know where the tail starts
+      const probe = await yelpSearch(YELP_API_KEY, { ...baseParams, limit: "1", offset: "0" });
+      const total = Math.min(probe.total, YELP_MAX_RESULTS);
+      const tailIds = new Set<string>();
+      let queries = 1;
+      let lowestReviewCount = Number.POSITIVE_INFINITY;
+      let highestReviewCount = 0;
+
+      if (total === 0) {
+        return new Response(JSON.stringify({
+          success: true, city: tailCity, mode: "tail", cell: cellIdx,
+          price: body.price || "all", category: body.category || "restaurants",
+          slice_total: 0, unique_ids: 0, new_to_db: 0, queries,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Compute starting offset for the tail
+      const desiredFetch = tailPages * YELP_PAGE_LIMIT;
+      const startOffset = Math.max(0, total - desiredFetch);
+      // Align to page boundary
+      const alignedStart = Math.floor(startOffset / YELP_PAGE_LIMIT) * YELP_PAGE_LIMIT;
+
+      for (let offset = alignedStart; offset < total; offset += YELP_PAGE_LIMIT) {
+        const params = { ...baseParams, limit: String(YELP_PAGE_LIMIT), offset: String(offset) };
+        const { businesses } = await yelpSearch(YELP_API_KEY, params);
+        queries++;
+        if (businesses.length === 0) break;
+        for (const biz of businesses) {
+          tailIds.add(biz.id);
+          const rc = Number(biz.review_count) || 0;
+          if (rc < lowestReviewCount) lowestReviewCount = rc;
+          if (rc > highestReviewCount) highestReviewCount = rc;
+        }
+        await new Promise((r) => setTimeout(r, 80));
+      }
+
+      const allIds = [...tailIds];
+      const { newCount, dbErrors } = await persistIds(supabaseTail, allIds, tailCity, existingIdsTail);
+
+      return new Response(JSON.stringify({
+        success: true, city: tailCity, mode: "tail", cell: cellIdx,
+        cell_center: { lat: c.lat, lng: c.lng, radius: c.radius },
+        price: body.price || "all",
+        category: body.category || "restaurants",
+        slice_total: total,
+        tail_start_offset: alignedStart,
+        unique_ids: tailIds.size,
+        new_to_db: newCount,
+        lowest_review_count: lowestReviewCount === Number.POSITIVE_INFINITY ? null : lowestReviewCount,
+        highest_review_count: highestReviewCount,
+        queries,
+        db_errors: dbErrors,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // === HARVEST ===
     const city = body.city;
     if (!city) {
