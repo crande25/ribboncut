@@ -365,11 +365,12 @@ Deno.serve(async (req) => {
             console.error(`Backfill error for ${yelpId}:`, err);
           }
         }
+        if (allKeysExhausted) break;
       }
     }
 
     return new Response(
-      JSON.stringify({ success: true, results }),
+      JSON.stringify({ success: true, results, yelpKeys: pool.status(), allKeysExhausted }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error: unknown) {
