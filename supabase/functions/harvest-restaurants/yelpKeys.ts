@@ -143,13 +143,32 @@ export class YelpKeyPool {
         headers: { Authorization: `Bearer ${key.value}`, Accept: "application/json" },
       });
 
-      // Quota exhausted or auth/permission failure → rotate
-      if (res.status === 429 || res.status === 401 || res.status === 403) {
+      // Auth / permission failure → key is dead for the day, rotate + persist
+      if (res.status === 401 || res.status === 403) {
         const body = await res.text();
         console.warn(`[YelpKeyPool] ${key.name} got ${res.status}: ${body.slice(0, 200)}`);
         await this.markExhausted(key.name, res.status, body);
         console.log(`[YelpKeyPool] rotating: will try next available key`);
-        continue; // try next key
+        continue;
+      }
+
+      // 429 has TWO flavors:
+      //   ACCESS_LIMIT_REACHED        → daily quota dead until next reset → mark exhausted + rotate
+      //   TOO_MANY_REQUESTS_PER_SECOND → transient throttle → back off briefly + retry SAME key
+      if (res.status === 429) {
+        const body = await res.text();
+        const isDailyQuota = /ACCESS_LIMIT_REACHED/i.test(body);
+        const isPerSecond = /TOO_MANY_REQUESTS_PER_SECOND/i.test(body);
+        console.warn(`[YelpKeyPool] ${key.name} got 429 (${isPerSecond ? "per-second" : isDailyQuota ? "daily" : "unknown"}): ${body.slice(0, 200)}`);
+        if (isPerSecond) {
+          // Brief backoff, do NOT mark exhausted, retry same key
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
+        // Default to treating any other 429 as daily exhaustion
+        await this.markExhausted(key.name, res.status, body);
+        console.log(`[YelpKeyPool] rotating: will try next available key`);
+        continue;
       }
 
       if (!res.ok) {
