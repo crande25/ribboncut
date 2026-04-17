@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { YelpKeyPool } from "./yelpKeys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -124,13 +125,12 @@ Deno.serve(async (req) => {
       } catch { /* no body, scan all */ }
     }
 
-    const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const GOOGLE_PLACES_API_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 
-    if (!YELP_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return new Response(
         JSON.stringify({ error: "Missing required environment variables" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -138,6 +138,19 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Init Yelp key pool (rotates across YELP_API_KEY, YELP_API_KEY_2, ...)
+    const pool = new YelpKeyPool(supabase);
+    try {
+      await pool.load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load Yelp keys";
+      return new Response(
+        JSON.stringify({ error: msg }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    let allKeysExhausted = false;
     const results: { city: string; newCount: number; total: number }[] = [];
     const newYelpIds: { yelp_id: string; name: string; categories: string; price: string | null; rating: number | null; city: string }[] = [];
     const citiesToScan = cityFilter || SE_MICHIGAN_CITIES;
@@ -168,13 +181,19 @@ Deno.serve(async (req) => {
           limit: "50", offset: String(offset), categories: "restaurants",
         });
 
-        const yelpRes = await fetch(`${YELP_API_URL}/businesses/search?${params}`, {
-          headers: { Authorization: `Bearer ${YELP_API_KEY}`, Accept: "application/json" },
-        });
+        const yelpRes = await pool.fetch(`${YELP_API_URL}/businesses/search?${params}`);
 
-        if (!yelpRes.ok) { console.error(`Yelp error for ${city} offset ${offset}: ${yelpRes.status}`); break; }
+        if (!yelpRes.ok) {
+          if (yelpRes.exhaustedAllKeys) {
+            console.error(`Yelp ALL KEYS EXHAUSTED while scanning ${city} offset ${offset}`);
+            allKeysExhausted = true;
+          } else {
+            console.error(`Yelp error for ${city} offset ${offset}: status=${yelpRes.status} key=${yelpRes.keyName}`);
+          }
+          break;
+        }
 
-        const data = await yelpRes.json();
+        const data = yelpRes.body;
         const businesses = data.businesses || [];
         if (businesses.length === 0) break;
 
@@ -206,6 +225,10 @@ Deno.serve(async (req) => {
 
       results.push({ city, newCount: 0, total: cityTotal });
       console.log(`Scanned ${city}: ${cityTotal} businesses`);
+      if (allKeysExhausted) {
+        console.warn("Aborting remaining cities — all Yelp keys exhausted");
+        break;
+      }
     }
 
     // Step 3: Diff — find genuinely new restaurants
