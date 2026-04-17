@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      api_key_status: {
+        Row: {
+          exhausted_at: string | null
+          id: string
+          key_name: string
+          last_error: string | null
+          last_status: number | null
+          provider: string
+          reset_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          exhausted_at?: string | null
+          id?: string
+          key_name: string
+          last_error?: string | null
+          last_status?: number | null
+          provider: string
+          reset_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          exhausted_at?: string | null
+          id?: string
+          key_name?: string
+          last_error?: string | null
+          last_status?: number | null
+          provider?: string
+          reset_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       atmosphere_cache: {
         Row: {
           atmosphere_summary: string
