@@ -1,36 +1,32 @@
 
 
-## Plan: Proof-of-Concept — Detroit Restaurant Counts by Price Tier
+## Plan: Hot & New harvest mode (minimal schema)
 
-### Goal
-Before committing to a multi-pass strategy, test how many restaurants Yelp reports for Detroit at each price level (`1`, `2`, `3`, `4`) and without a price filter. If 4 price-filtered passes × 1,000 results each covers the full inventory, that's sufficient — no need for category or sort permutations.
+### Principle
+Don't add columns we don't need. The existing `restaurant_sightings` table already captures everything required: `yelp_id`, `first_seen_at`, `city`. The "new restaurant" experience is driven entirely by `first_seen_at`.
 
-### Implementation
+### Schema change
+**None.** Reuse the existing table as-is.
 
-**1. Create a temporary test edge function `test-yelp-counts/index.ts`**
+### Edge function change
+Add `mode: "hot-and-new"` to `supabase/functions/harvest-restaurants/index.ts`:
 
-A lightweight function that queries Yelp for Detroit with each price value and returns only the `total` field:
+1. For each city in `seMichiganCities`:
+   - Query `/businesses/search?location={city}&categories=restaurants&attributes=hot_and_new&limit=50&offset=N`
+   - Walk pages until empty or 240 cap reached
+   - For each business: `INSERT ... ON CONFLICT (yelp_id) DO NOTHING` into `restaurant_sightings` with `city` and `first_seen_at = now()`
+2. Return per-city counts: `{ city, scanned, newly_inserted }`
 
-```
-For each price in [1, 2, 3, 4, null]:
-  GET /businesses/search?location=Detroit,MI&categories=restaurants&price={price}&limit=1
-  Record data.total
-Return { price_1: N, price_2: N, price_3: N, price_4: N, no_filter: N, sum_by_price: N }
-```
+Existing restaurants are ignored on conflict — their original `first_seen_at` is preserved. New restaurants appear in the feed automatically because `get-restaurants` already orders by `first_seen_at desc`.
 
-This tells us:
-- Whether the sum of price-filtered totals ≥ the unfiltered total (i.e., full coverage)
-- Whether any single tier exceeds 1,000 (would need sub-filtering)
+### What we're NOT doing
+- No `is_hot_and_new`, `last_seen_at`, `seen_count`, or `hot_and_new_first_seen_at` columns
+- No badge/filter UI changes
+- No changes to `get-restaurants` — it already does the right thing
 
-**2. Deploy and call it**
+### Files touched
+- `supabase/functions/harvest-restaurants/index.ts` — add `hot-and-new` mode
 
-Deploy the function, call it once, read the results.
-
-**3. Clean up**
-
-Delete the test function after we have the numbers. Then decide: if 4 passes suffice, update `scan-restaurants` to simply loop over `price=1..4` with `maxResults=1000` each. That's only 4× the current work — very manageable.
-
-### Files
-- Create `supabase/functions/test-yelp-counts/index.ts` (temporary)
-- No database changes
+### Tradeoff acknowledged
+We won't be able to tell *why* a restaurant was discovered (hot_and_new sweep vs. other harvest modes) or detect when it stops being flagged hot_and_new. That's fine — the user just wants "new restaurants in my area," and `first_seen_at` answers that.
 
