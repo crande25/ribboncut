@@ -1,3 +1,6 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { YelpKeyPool } from "./yelpKeys.ts";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -11,10 +14,24 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
-    if (!YELP_API_KEY) {
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return new Response(
-        JSON.stringify({ error: "YELP_API_KEY is not configured" }),
+        JSON.stringify({ error: "Missing required Supabase env vars" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Init Yelp key pool (rotates across YELP_API_KEY, YELP_API_KEY_2, ...)
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const pool = new YelpKeyPool(supabase);
+    try {
+      await pool.load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load Yelp keys";
+      return new Response(
+        JSON.stringify({ error: msg }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -50,38 +67,34 @@ Deno.serve(async (req) => {
     });
 
     // Yelp's open_at only accepts timestamps within the last 2 weeks.
-    // If opened_since is older than that, we skip open_at and rely on default sorting.
     if (openedSince) {
       const sinceDate = new Date(openedSince);
       const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
       if (sinceDate > twoWeeksAgo) {
         const ts = Math.floor(sinceDate.getTime() / 1000);
         params.set("open_at", String(ts));
-        // Remove sort_by when using open_at (Yelp API requirement)
         params.delete("sort_by");
       }
     }
 
-    const yelpResponse = await fetch(
-      `${YELP_API_URL}/businesses/search?${params.toString()}`,
-      {
-        headers: {
-          Authorization: `Bearer ${YELP_API_KEY}`,
-          Accept: "application/json",
-        },
+    const searchRes = await pool.fetch(`${YELP_API_URL}/businesses/search?${params.toString()}`);
+    if (!searchRes.ok) {
+      if (searchRes.exhaustedAllKeys) {
+        console.error("Yelp ALL KEYS EXHAUSTED");
+        return new Response(
+          JSON.stringify({ error: "All Yelp API keys exhausted", keys: pool.status() }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
-    );
-
-    if (!yelpResponse.ok) {
-      const errorBody = await yelpResponse.text();
-      console.error(`Yelp API error [${yelpResponse.status}]: ${errorBody}`);
+      const bodyStr = typeof searchRes.body === "string" ? searchRes.body : JSON.stringify(searchRes.body);
+      console.error(`Yelp search error [${searchRes.status}] key=${searchRes.keyName}: ${bodyStr}`);
       return new Response(
-        JSON.stringify({ error: `Yelp API error: ${yelpResponse.status}` }),
-        { status: yelpResponse.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ error: `Yelp API error: ${searchRes.status}` }),
+        { status: searchRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const data = await yelpResponse.json();
+    const data = searchRes.body;
 
     // Transform Yelp data to our app's format
     const restaurants = (data.businesses || []).map((biz: any) => ({
@@ -99,19 +112,13 @@ Deno.serve(async (req) => {
       coordinates: biz.coordinates,
     }));
 
-    // Now fetch details for each restaurant to get photos and hours
-    // (We do this for the first few to avoid rate limits)
+    // Enrich first few with detail fetches (photos, hours) via the pool
     const enrichedRestaurants = await Promise.all(
       restaurants.slice(0, Math.min(restaurants.length, 5)).map(async (r: any) => {
         try {
-          const detailRes = await fetch(`${YELP_API_URL}/businesses/${r.id}`, {
-            headers: {
-              Authorization: `Bearer ${YELP_API_KEY}`,
-              Accept: "application/json",
-            },
-          });
+          const detailRes = await pool.fetch(`${YELP_API_URL}/businesses/${r.id}`);
           if (detailRes.ok) {
-            const detail = await detailRes.json();
+            const detail = detailRes.body;
             return {
               ...r,
               photos: detail.photos || [r.imageUrl],
