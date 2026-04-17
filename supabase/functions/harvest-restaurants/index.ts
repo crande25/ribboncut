@@ -310,6 +310,126 @@ Deno.serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // === KEYWORD ===
+    // Mimic the Yelp web "New Restaurants" search by calling Fusion with
+    // term="new restaurants" (or a custom term). Records every yelp_id returned
+    // and reports per-business which were already known vs newly inserted.
+    if (mode === "keyword") {
+      const supabaseKW = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const cities: string[] = body.cities || ["Novi, MI"];
+      const term: string = body.term || "new restaurants";
+      const KW_CAP = 240; // Yelp's reachable cap on a single query
+      const results: any[] = [];
+
+      for (const city of cities) {
+        const collected: any[] = [];
+        const seen = new Set<string>();
+        let queries = 0;
+        let offset = 0;
+        let total = 0;
+        let rateLimited = false;
+
+        while (offset < KW_CAP) {
+          const limit = Math.min(YELP_PAGE_LIMIT, KW_CAP - offset);
+          const { businesses, total: t, rateLimited: rl } = await yelpSearch(pool, {
+            location: city,
+            term,
+            limit: String(limit),
+            offset: String(offset),
+          });
+          queries++;
+          total = t;
+          if (rl) { rateLimited = true; break; }
+          if (businesses.length === 0) break;
+          for (const biz of businesses) {
+            if (!seen.has(biz.id)) {
+              seen.add(biz.id);
+              collected.push(biz);
+            }
+          }
+          offset += businesses.length;
+          if (offset >= Math.min(total, KW_CAP)) break;
+          await new Promise((r) => setTimeout(r, 80));
+        }
+
+        const ids = collected.map((b) => b.id);
+        let newlyInserted = 0;
+        let dbErrors = 0;
+        const existing = new Set<string>();
+
+        if (ids.length > 0) {
+          const { data: existingRows } = await supabaseKW
+            .from("restaurant_sightings")
+            .select("yelp_id, first_seen_at, city")
+            .in("yelp_id", ids);
+          for (const r of existingRows || []) existing.add(r.yelp_id);
+          const existingMeta = new Map(
+            (existingRows || []).map((r: any) => [r.yelp_id, r]),
+          );
+
+          const rows = ids.map((id) => ({
+            yelp_id: id,
+            city,
+            is_new_discovery: false,
+          }));
+          for (let i = 0; i < rows.length; i += 500) {
+            const chunk = rows.slice(i, i + 500);
+            const { error } = await supabaseKW
+              .from("restaurant_sightings")
+              .upsert(chunk, { onConflict: "yelp_id", ignoreDuplicates: true });
+            if (error) { console.error(`[keyword] DB upsert error for ${city}:`, error.message); dbErrors++; }
+          }
+          newlyInserted = ids.filter((id) => !existing.has(id)).length;
+
+          // Annotate each result with status for response
+          for (const biz of collected) {
+            const prior = existingMeta.get(biz.id) as any;
+            (biz as any)._status = prior ? "already_known" : "newly_inserted";
+            (biz as any)._prior_first_seen_at = prior?.first_seen_at || null;
+            (biz as any)._prior_city = prior?.city || null;
+          }
+        }
+
+        const businesses_breakdown = collected.map((b: any) => ({
+          yelp_id: b.id,
+          name: b.name,
+          city: b.location?.city,
+          address: (b.location?.display_address || []).join(", "),
+          categories: (b.categories || []).map((c: any) => c.title),
+          rating: b.rating,
+          review_count: b.review_count,
+          status: b._status,
+          prior_first_seen_at: b._prior_first_seen_at,
+          prior_city: b._prior_city,
+          url: b.url,
+        }));
+
+        console.log(`[keyword] ${city} term="${term}": scanned=${ids.length} newly_inserted=${newlyInserted} already_known=${ids.length - newlyInserted} total_reported=${total} queries=${queries}${rateLimited ? " RATE_LIMITED" : ""}`);
+
+        results.push({
+          city,
+          term,
+          scanned: ids.length,
+          newly_inserted: newlyInserted,
+          already_known: ids.length - newlyInserted,
+          total_reported_by_yelp: total,
+          queries,
+          db_errors: dbErrors,
+          rate_limited: rateLimited,
+          businesses: businesses_breakdown,
+        });
+
+        if (rateLimited) break;
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        mode: "keyword",
+        cities_processed: results.length,
+        results,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // === PROBE ===
     if (mode === "probe") {
       const cities = body.cities || SE_MICHIGAN_CITIES;
