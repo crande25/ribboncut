@@ -537,14 +537,20 @@ Deno.serve(async (req) => {
           continue;
         }
         const reportedTotal = probe.total;
-        const total = Math.min(reportedTotal, YELP_MAX_RESULTS);
+        // Yelp /businesses/search caps at limit + offset <= 240, so the deepest
+        // reachable page starts at offset 190 (190 + 50 = 240). Discover walks back from there.
+        const SEARCH_OFFSET_CAP = 240;
+        const total = Math.min(reportedTotal, SEARCH_OFFSET_CAP);
         if (total === 0) {
           results.push({ city: dCity, reported_total: 0, found: null, queries: 1 });
           continue;
         }
 
-        // Start at the last reachable page boundary
-        let offset = Math.floor((total - 1) / YELP_PAGE_LIMIT) * YELP_PAGE_LIMIT;
+        // Last reachable page boundary, capped so limit+offset stays <= 240
+        let offset = Math.min(
+          Math.floor((total - 1) / YELP_PAGE_LIMIT) * YELP_PAGE_LIMIT,
+          SEARCH_OFFSET_CAP - YELP_PAGE_LIMIT,
+        );
         let queries = 1;
         let found: any = null;
         let pagesWalked = 0;
