@@ -178,12 +178,24 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const YELP_API_KEY = Deno.env.get("YELP_API_KEY");
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!YELP_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
       return new Response(
-        JSON.stringify({ error: "Missing required env vars" }),
+        JSON.stringify({ error: "Missing required Supabase env vars" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // Initialize Supabase + Yelp key pool (rotates across YELP_API_KEY, YELP_API_KEY_2, ...)
+    const supabaseGlobal = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const pool = new YelpKeyPool(supabaseGlobal);
+    try {
+      await pool.load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load Yelp keys";
+      return new Response(
+        JSON.stringify({ error: msg }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -199,13 +211,21 @@ Deno.serve(async (req) => {
     //   "harvest" — harvests ONE city. For Phase 1 cities, does everything.
     //               For Phase 2, accepts optional "slice" param to run one price×category combo at a time.
     //   "harvest_all_slices" — for a Phase 2 city, runs ALL slices sequentially (may timeout for huge cities)
+    //   "key_status" — returns the current pool state (which keys are exhausted, when they reset)
+
+    // === KEY STATUS ===
+    if (mode === "key_status") {
+      return new Response(JSON.stringify({ provider: "yelp", keys: pool.status() }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // === PROBE ===
     if (mode === "probe") {
       const cities = body.cities || SE_MICHIGAN_CITIES;
       const results: any[] = [];
       for (const city of cities) {
-        const { totals, needsPhase2 } = await probePriceTiers(YELP_API_KEY, city);
+        const { totals, needsPhase2 } = await probePriceTiers(pool, city);
         results.push({ city, totals, needsPhase2 });
       }
       return new Response(JSON.stringify(results), {
