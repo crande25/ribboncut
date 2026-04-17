@@ -374,7 +374,17 @@ Deno.serve(async (req) => {
       const debugPages: any[] = [];
       const sliceTag = `tail[${tailCity} c${cellIdx} p=${body.price || "all"} cat=${body.category || "restaurants"}]`;
 
-      console.log(`${sliceTag} probe.total=${reportedTotal} clamped=${total}`);
+      console.log(`${sliceTag} probe.total=${reportedTotal} clamped=${total} status=${probe.status}`);
+
+      // Surface rate-limit explicitly so callers don't mistake throttling for empty slices.
+      if (probe.rateLimited) {
+        console.warn(`${sliceTag} RATE LIMITED on probe`);
+        return new Response(JSON.stringify({
+          success: false, rate_limited: true, city: tailCity, mode: "tail", cell: cellIdx,
+          price: body.price || "all", category: body.category || "restaurants",
+          message: "Yelp returned 429 ACCESS_LIMIT_REACHED on probe. Daily quota exhausted.",
+        }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
 
       if (total === 0) {
         console.log(`${sliceTag} EMPTY slice (probe returned 0)`);
