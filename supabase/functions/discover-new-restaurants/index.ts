@@ -127,11 +127,9 @@ const corsHeaders = {
 const SE_MICHIGAN_CITIES = [
   "Detroit, MI", "Ann Arbor, MI", "Novi, MI", "Troy, MI", "Royal Oak, MI",
   "Birmingham, MI", "Dearborn, MI", "Livonia, MI", "Canton, MI", "Plymouth, MI",
-  "Farmington Hills, MI", "Southfield, MI", "Warren, MI", "Sterling Heights, MI",
-  "Rochester Hills, MI", "Clinton Township, MI", "Pontiac, MI", "West Bloomfield, MI",
-  "Taylor, MI", "Ferndale, MI", "Ypsilanti, MI", "Northville, MI", "Grosse Pointe, MI",
-  "Bloomfield Hills, MI", "Wyandotte, MI", "Monroe, MI", "Port Huron, MI",
-  "Shelby Township, MI", "Waterford, MI",
+  "Farmington Hills, MI", "Southfield, MI", "Rochester Hills, MI",
+  "West Bloomfield, MI", "Ferndale, MI", "Ypsilanti, MI", "Northville, MI",
+  "Bloomfield Hills, MI", "Monroe, MI", "Port Huron, MI",
 ];
 
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
