@@ -342,6 +342,9 @@ interface VerifiedHit {
   candidate: Candidate;
   categoryAliases: string[];
   categoryTitles: string[];
+  priceLevel: number | null;
+  rating: number | null;
+  reviewCount: number | null;
 }
 
 interface VerifyResult {
