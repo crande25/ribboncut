@@ -132,7 +132,7 @@ const SE_MICHIGAN_CITIES = [
   "Bloomfield Hills, MI", "Monroe, MI", "Port Huron, MI",
 ];
 
-const GEMINI_MODEL = "gemini-2.5-pro";
+const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const YELP_SEARCH_URL = "https://api.yelp.com/v3/businesses/search";
 
