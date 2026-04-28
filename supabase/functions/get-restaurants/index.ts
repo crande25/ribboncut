@@ -106,9 +106,33 @@ Deno.serve(async (req) => {
       atmosphereMap.set(row.yelp_id, row.atmosphere_summary);
     }
 
-    // Fetch live Yelp details for each sighting via the rotating key pool
+    // Batch-fetch cached categories
+    const { data: categoryData } = await supabase
+      .from("restaurant_categories")
+      .select("yelp_id, aliases")
+      .in("yelp_id", yelpIds);
+
+    const categoryMap = new Map<string, string[]>();
+    for (const row of categoryData || []) {
+      categoryMap.set(row.yelp_id, row.aliases || []);
+    }
+
+    // Strict pre-filter: if dietary filter is active, drop sightings without
+    // a category cache hit OR without a matching alias. This avoids paying for
+    // Yelp detail calls on rows we'd discard anyway.
+    let workingSightings = sightings;
+    if (dietaryCategories) {
+      const filters = dietaryCategories.split(",").map((c) => c.trim().toLowerCase());
+      workingSightings = sightings.filter((s: any) => {
+        const aliases = categoryMap.get(s.yelp_id);
+        if (!aliases) return false; // strict: exclude unknowns
+        return filters.some((f) => aliases.includes(f));
+      });
+    }
+
+    // Fetch live Yelp details for each (post-filter) sighting via the rotating key pool
     const restaurants = await Promise.all(
-      sightings.map(async (sighting: any) => {
+      workingSightings.map(async (sighting: any) => {
         try {
           const detailRes = await pool.fetch(`${YELP_API_URL}/businesses/${sighting.yelp_id}`);
 
@@ -123,11 +147,19 @@ Deno.serve(async (req) => {
 
           const biz = detailRes.body;
 
-          if (dietaryCategories) {
-            const filters = dietaryCategories.split(",").map((c) => c.trim().toLowerCase());
-            const bizCategories = (biz.categories || []).map((c: any) => c.alias.toLowerCase());
-            const hasMatch = filters.some((f) => bizCategories.includes(f));
-            if (!hasMatch) return null;
+          // Lazy-write category cache when we have fresh Yelp data
+          if (!categoryMap.has(sighting.yelp_id)) {
+            const aliases = (biz.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean);
+            const titles = (biz.categories || []).map((c: any) => String(c.title || "")).filter(Boolean);
+            supabase
+              .from("restaurant_categories")
+              .upsert(
+                { yelp_id: sighting.yelp_id, aliases, titles, updated_at: new Date().toISOString() },
+                { onConflict: "yelp_id" },
+              )
+              .then(({ error }) => {
+                if (error) console.error(`[cache] lazy upsert failed ${sighting.yelp_id}: ${error.message}`);
+              });
           }
 
           // Use cached atmosphere or fallback
