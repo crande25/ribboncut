@@ -51,7 +51,7 @@ export function CityChecklist({ selectedCities, onCitiesChange }: CityChecklistP
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        {SE_MICHIGAN_CITIES.map((city) => {
+        {[...SE_MICHIGAN_CITIES].sort((a, b) => a.localeCompare(b)).map((city) => {
           const isSelected = selectedCities.includes(city);
           return (
             <button
