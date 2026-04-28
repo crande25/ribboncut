@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin } from "lucide-react";
+import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin, DollarSign, Star } from "lucide-react";
 import { CityChecklist } from "@/components/CityChecklist";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
@@ -28,6 +28,20 @@ const themeOptions = [
   { value: "dark" as const, label: "Dark", icon: Moon },
 ];
 
+const priceOptions = [
+  { value: 1, label: "$" },
+  { value: 2, label: "$$" },
+  { value: 3, label: "$$$" },
+  { value: 4, label: "$$$$" },
+];
+
+const ratingOptions = [
+  { value: 0, label: "Any" },
+  { value: 3.5, label: "3.5★+" },
+  { value: 4.0, label: "4.0★+" },
+  { value: 4.5, label: "4.5★+" },
+];
+
 const scheduleOptions = [
   { value: "daily", label: "Daily" },
   { value: "3days", label: "Every 3 Days" },
@@ -37,6 +51,8 @@ const scheduleOptions = [
 export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
+  const [priceFilters, setPriceFilters] = useLocalStorage<number[]>("price_filters", []);
+  const [minRating, setMinRating] = useLocalStorage<number>("min_rating", 0);
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
