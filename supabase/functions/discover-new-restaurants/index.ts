@@ -415,7 +415,7 @@ Deno.serve(async (req) => {
     if (debug) {
       const city = citiesToScan[0];
       console.log(`[discover] DEBUG mode — single city only: ${city}`);
-      const { candidates, raw } = await callLovableAI(city, todayStr, sevenDaysAgoStr, true);
+      const { candidates, raw, grounding } = await callGeminiGrounded(city, todayStr, sevenDaysAgoStr, true);
       return new Response(
         JSON.stringify({
           ok: true,
@@ -424,6 +424,7 @@ Deno.serve(async (req) => {
           window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
           candidate_count: candidates.length,
           candidates,
+          grounding,
           raw_ai_response: raw,
         }, null, 2),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
