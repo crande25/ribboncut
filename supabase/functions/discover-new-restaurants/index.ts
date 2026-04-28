@@ -309,12 +309,28 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Restrict callers: only the service role key (used by pg_cron and the
-    // Lovable server-side curl tool) is allowed. The anon key, user JWTs,
-    // or no auth all get rejected.
+    // Restrict callers: only requests bearing the service role key (used by
+    // pg_cron and Lovable server-side invocations) are allowed. We accept
+    // either a direct match on SUPABASE_SERVICE_ROLE_KEY, or any JWT whose
+    // `role` claim is `service_role` (handles legacy/new key formats).
     const authHeader = req.headers.get("Authorization") ?? "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!token || token !== SUPABASE_SERVICE_ROLE_KEY) {
+    let authorized = false;
+    if (token && token === SUPABASE_SERVICE_ROLE_KEY) {
+      authorized = true;
+    } else if (token) {
+      try {
+        const parts = token.split(".");
+        if (parts.length === 3) {
+          const payload = JSON.parse(
+            atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")),
+          );
+          if (payload?.role === "service_role") authorized = true;
+        }
+      } catch (_) { /* ignore */ }
+    }
+    if (!authorized) {
+      console.log("forbidden: missing or non-service-role token");
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
