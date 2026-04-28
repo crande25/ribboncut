@@ -202,6 +202,26 @@ Deno.serve(async (req) => {
               });
           }
 
+          // Lazy-write metrics cache when missing
+          if (!metricsMap.has(sighting.yelp_id)) {
+            const priceLevel = typeof biz.price === "string" && biz.price.length > 0 ? biz.price.length : null;
+            supabase
+              .from("restaurant_metrics")
+              .upsert(
+                {
+                  yelp_id: sighting.yelp_id,
+                  price_level: priceLevel,
+                  rating: typeof biz.rating === "number" ? biz.rating : null,
+                  review_count: typeof biz.review_count === "number" ? biz.review_count : null,
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: "yelp_id" },
+              )
+              .then(({ error }) => {
+                if (error) console.error(`[cache] lazy metrics upsert failed ${sighting.yelp_id}: ${error.message}`);
+              });
+          }
+
           // Use cached atmosphere or fallback
           const cachedAtmosphere = atmosphereMap.get(sighting.yelp_id);
           const categories = (biz.categories || []).map((c: any) => c.title).join(", ");
