@@ -340,6 +340,8 @@ interface VerifiedHit {
   yelp_name: string;
   yelp_city: string;
   candidate: Candidate;
+  categoryAliases: string[];
+  categoryTitles: string[];
 }
 
 interface VerifyResult {
