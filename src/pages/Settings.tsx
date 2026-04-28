@@ -91,7 +91,7 @@ export default function Settings() {
           <h2 className="text-sm font-semibold text-foreground">Price Range</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          Pick the price tiers you're into. No selection = all prices.
+          Pick a price tier, or none for all prices.
         </p>
         <div className="flex flex-wrap gap-2">
           {priceOptions.map((opt) => {
@@ -100,11 +100,7 @@ export default function Settings() {
               <button
                 key={opt.value}
                 onClick={() =>
-                  setPriceFilters((prev) =>
-                    isSelected
-                      ? prev.filter((v) => v !== opt.value)
-                      : [...prev, opt.value]
-                  )
+                  setPriceFilters(isSelected ? [] : [opt.value])
                 }
                 className={cn(
                   "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
