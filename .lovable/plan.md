@@ -1,108 +1,145 @@
 ## Goal
 
-Replace the ungrounded Lovable AI call with a direct call to Google's Gemini API using the `google_search` tool, so the harvest actually finds recently opened restaurants. Keep the same downstream pipeline (Yelp verify → upsert into `restaurant_sightings`).
+Cut Gemini grounded-search usage from 29 calls/day (one per city) down to **10 calls/day** (one per batch of ~3 cities) so the daily harvest fits inside the free tier's 20 grounded-requests/day cap, with margin for retries and ad-hoc debug runs.
 
-## Why direct Gemini, not Lovable AI
+## Why batching works
 
-The Lovable AI gateway does not expose Google Search grounding. Direct Gemini API does — within Google's free tier (1,500 grounded requests/day on `gemini-2.5-flash`). Our usage is ~29/day.
+A single grounded prompt can ask Gemini to search the web for new openings across multiple cities and return results tagged by city. Google Search grounding fires per-prompt, not per-city — so 3 cities in one prompt = 1 grounded call instead of 3. The Yelp verification step is unchanged (still per-candidate) and Yelp has its own quota pool.
 
-## Step 1 — Add `GEMINI_API_KEY` secret
+Math:
+- 29 cities ÷ 3 cities/batch = 10 batches/day
+- 10 grounded calls/day fits comfortably under the 20/day free cap
+- Leaves ~10 calls/day headroom for manual debug runs
 
-Free key from https://aistudio.google.com → "Get API Key" → "Create API key". No billing setup required for the free tier.
-
-I'll request it via the secret tool. Edge function won't deploy a working harvest until it's set.
-
-## Step 2 — Rewrite `callLovableAI` → `callGeminiGrounded`
+## Step 1 — Refactor `callGeminiGrounded` to accept multiple cities
 
 File: `supabase/functions/discover-new-restaurants/index.ts`
 
-Endpoint: `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`
+Change the signature from `(city, today, sevenDaysAgo, debug)` to `(cities: string[], today, sevenDaysAgo, debug)` and have it return `Candidate[]` where each candidate carries its source city:
 
-Request body:
-
-```json
-{
-  "contents": [{
-    "role": "user",
-    "parts": [{ "text": "<existing prompt with city + date window>" }]
-  }],
-  "tools": [{ "google_search": {} }],
-  "generationConfig": { "temperature": 0.2 }
+```ts
+interface Candidate {
+  name: string;
+  address: string;
+  city: string;  // NEW — which input city this belongs to
 }
 ```
 
-Note: with `google_search` enabled, Gemini does **not** allow `responseSchema` or function-calling tools in the same request. So we ask for a plain-text answer in a strict format and parse it.
+New prompt shape (asks the model to attribute results to the input cities):
 
-Prompt update — append:
+```
+Search the web for restaurants that officially opened for business between
+${sevenDaysAgo} and ${today} in any of these cities:
+  - Detroit, MI
+  - Ann Arbor, MI
+  - Novi, MI
 
-```text
+Only include permanent locations currently fully operational. Exclude pop-ups,
+food trucks without a permanent address, planned/announced openings, and
+locations that have already closed.
+
 Return ONLY a JSON array, no prose, no markdown fencing. Each item:
-{"name": "...", "address": "..."}
-If none found, return [].
+{"name": "...", "address": "Street, City, State", "city": "<one of the input cities, exact string>"}
+
+If you find none, return exactly: []
 ```
 
-Parser: strip optional ```json fences, `JSON.parse`, validate each item has string `name`/`address`. Existing fuzzy filter still drops obviously bad rows.
+Parser changes:
+- Validate `city` is one of the input cities (drop rows that aren't).
+- Existing fence-strip + array-extraction logic stays.
 
-## Step 3 — Surface grounding metadata in debug mode
+## Step 2 — Refactor the main loop into batches
 
-Existing `debug` flag already returns the raw response. With Gemini direct, the response shape becomes:
+Replace the per-city loop with a per-batch loop:
 
-```text
-candidates[0].content.parts[].text         ← the JSON we parse
-candidates[0].groundingMetadata
-  ├── webSearchQueries: ["new restaurants opened Detroit MI ..."]
-  ├── groundingChunks: [{ web: { uri, title } }, ...]
-  └── groundingSupports: [...]
+```ts
+const BATCH_SIZE = 3;
+for (let i = 0; i < citiesToScan.length; i += BATCH_SIZE) {
+  const batch = citiesToScan.slice(i, i + BATCH_SIZE);
+  const { candidates } = await callGeminiGrounded(batch, todayStr, sevenDaysAgoStr);
+  // Group candidates by candidate.city, then run existing Yelp verify + upsert
+  // per candidate. Per-city scan_log row written for each city in the batch
+  // (new_count = inserts attributed to that city, even if 0).
+  await new Promise(r => setTimeout(r, 7000)); // throttle between batches
+}
 ```
 
-Debug response surfaces `webSearchQueries` and the list of `groundingChunks` URIs alongside `raw_ai_response`. That's the receipt that grounding actually fired.
+The chunking (`chunk` / `chunk_size`) params stay — they still slice the master city list — but we no longer need them for cron because 10 batches × ~10s each ≈ 100s, well under the 150s edge limit. Keep the params for ad-hoc / manual full-harvest calls.
 
-## Step 4 — Error handling
+Default `chunk_size` raised to `30` (effectively "all cities") so an unparameterized cron call processes everything in one invocation.
 
-- **429** → "Gemini rate limited (free tier 15 RPM / 1,500 req/day)". Throw, city is logged as failed, harvest continues to next city.
-- **403** with `API_KEY_INVALID` → throw with clear message; user needs to rotate the secret.
-- **Empty `candidates`** or no `parts[].text` → log and return `[]` (same as current behavior).
-- **JSON parse failure** → log raw text in debug mode, return `[]`.
+## Step 3 — Collapse cron from 30 jobs to 1
 
-## Step 5 — Cron behavior
+Currently 29 per-city jobs + 1 catch-all daily job. Replace with **a single daily job** at 06:00 UTC that calls the function with no body and lets it process all 29 cities in 10 batches inside one invocation.
 
-Cron job continues to call the same endpoint with no body. Default model becomes Gemini grounded — no opt-in flag, no fallback. (We discussed opt-in earlier; flipping to "always grounded" is the right call because the ungrounded path returns 0 candidates and is therefore useless.)
+Migration plan (these run via the SQL insert tool since they reference the project URL + anon key):
 
-The Lovable AI gateway code path is **removed**, not kept as a fallback. Reasons:
-- Maintaining two providers doubles the surface area for bugs.
-- The ungrounded path is proven empty.
-- If Gemini quota ever exhausts, the failure mode (logged 429s, 0 inserts that day) is the same as cron simply not running.
+```sql
+-- Remove all the per-city scan jobs and the legacy daily job
+SELECT cron.unschedule(jobid) FROM cron.job
+WHERE jobname LIKE 'scan-%' OR jobname = 'discover-new-restaurants-daily';
 
-## Step 6 — Verification after deploy
+-- Single daily harvest at 06:00 UTC (~2am EST)
+SELECT cron.schedule(
+  'discover-new-restaurants-daily',
+  '0 6 * * *',
+  $$
+  SELECT net.http_post(
+    url := 'https://dcvgzkhoxlvtynlnxsdw.supabase.co/functions/v1/discover-new-restaurants',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer <SERVICE_ROLE_KEY>'
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);
+```
 
-1. Debug call for Detroit, 30-day window:
-   ```
-   POST /discover-new-restaurants
-   body: {"cities":["Detroit, MI"],"days":30,"debug":true}
-   ```
-   Expect: non-empty `candidates`, `grounding.webSearchQueries` populated, `grounding.groundingChunks` URIs pointing to real news pages from the last 30 days.
+Note: the existing jobs use the **anon key** but the function requires service-role auth (added in the prior pass). That mismatch means the current cron has been failing 403 — confirmed by the empty edge-function logs. The new job uses the service role key so it actually runs.
 
-2. If candidates look real, run a full harvest with `{}`. Expect non-zero inserts across multiple cities.
+## Step 4 — Debug mode update
+
+Debug mode currently picks the first city and returns raw + grounding for one city. Update it to send the **first batch** (up to 3 cities) so debug runs accurately reflect production behavior:
+
+```
+POST /discover-new-restaurants
+body: {"cities":["Detroit, MI","Ann Arbor, MI","Novi, MI"], "days":30, "debug":true}
+```
+
+Response includes `cities` (array), per-city candidate counts, and the single `raw_ai_response` + `grounding` block.
+
+## Step 5 — Verification after deploy
+
+1. **Debug call** with 3 cities, 30-day window. Expect:
+   - `candidates[]` has items with `city` field set to one of the 3 inputs.
+   - `grounding.webSearchQueries` shows queries spanning the input cities.
+   - `grounding.sources` URIs point to real news pages.
+
+2. **Full run** with `{}`. Expect ~10 grounded calls in logs, total runtime ~80–120s, non-zero inserts.
+
+3. **Quota check the next day**: confirm we used ≤ 10 grounded calls in the 24h window.
 
 ## Files touched
 
 - **Edited**: `supabase/functions/discover-new-restaurants/index.ts`
-  - Replace `callLovableAI` body + parser
-  - Update debug response to include grounding metadata
-  - Update error messages
-- **Secret added**: `GEMINI_API_KEY`
-- **No** changes to: cron schedule, frontend, DB schema, RLS, auth guard, Yelp pool
-
-## What we're NOT doing
-
-- Not keeping the Lovable AI fallback
-- Not switching models (stays on `gemini-2.5-flash` — free tier covers it)
-- Not adding a UI toggle for grounded vs ungrounded
-- Not storing grounding citation URLs in the DB (debug-only for now; can add later if you want an audit trail)
+  - `callGeminiGrounded` signature + prompt + parser (cities array, per-row city tag)
+  - Main loop: per-batch instead of per-city
+  - Debug branch: emits a batch
+  - Default `chunk_size` raised so unparameterized calls cover all cities
+- **Cron**: 29 `scan-*` jobs + legacy `discover-new-restaurants-daily` removed; one new daily job inserted with service-role auth
+- **No** changes to: DB schema, RLS, Yelp pool, frontend, secrets
 
 ## Tradeoffs
 
-1. **New external dependency**: a Google account / key that lives outside Lovable Cloud. If the user revokes it or the project is forked, the new owner needs their own key.
-2. **No structured-output guarantee**: `google_search` precludes JSON schema enforcement, so we rely on prompt + parser. Mitigation: the prompt is explicit and the parser is forgiving (strips fences, validates per-item).
-3. **Free tier ceiling**: 1,500 grounded req/day. We use ~29. Plenty of room, but if you ever expand to hundreds of cities or hourly runs, you'd hit the limit.
-4. **Cost path forward**: if you outgrow the free tier, $35 per 1,000 grounded requests on Google's pay-as-you-go. ~$1/day at current scale would be the worst case.
+1. **Per-batch attribution risk**: model could mis-tag a candidate's city. Mitigation: parser drops rows whose `city` isn't in the input set; Yelp verify still requires `cityMatch(targetCity, yelpCity)` so a wrong tag results in a skip, not a bad insert.
+2. **Single point of failure**: if the daily run errors mid-way, fewer cities get scanned vs. the previous 29 independent jobs. Acceptable because the previous setup was failing entirely (403s) and the recovery path is "wait until tomorrow" either way. Manual chunked re-runs remain available via the `chunk` param.
+3. **Slightly noisier prompt**: asking for 3 cities at once may dilute model attention. Mitigation: batch size kept small (3) and explicit instructions tell the model to attribute each item to one of the input cities.
+4. **Free-tier ceiling still tight**: 10/day production + manual debug runs eat into the 20/day cap. If you need more debug headroom we can drop batch size to 2 (→ 15 calls/day) or raise to 4 (→ 8 calls/day) later.
+
+## What we're NOT doing
+
+- Not changing the model (stays on `gemini-2.5-flash-lite`)
+- Not removing the chunk/chunk_size params — they're still useful for manual partial runs
+- Not adding billing
+- Not changing the throttle delay (7s between batches stays — well within rate limits)

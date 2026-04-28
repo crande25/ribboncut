@@ -141,7 +141,10 @@ const YELP_SEARCH_URL = "https://api.yelp.com/v3/businesses/search";
 interface Candidate {
   name: string;
   address: string;
+  city: string;
 }
+
+const BATCH_SIZE = 3;
 
 function formatDate(d: Date): string {
   return d.toLocaleDateString("en-US", {
@@ -180,20 +183,27 @@ interface GroundingInfo {
 }
 
 async function callGeminiGrounded(
-  city: string,
+  cities: string[],
   today: string,
   sevenDaysAgo: string,
   debug = false,
 ): Promise<{ candidates: Candidate[]; raw?: any; grounding?: GroundingInfo }> {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
+  if (cities.length === 0) return { candidates: [] };
 
-  const prompt = `Search the web for restaurants that officially opened for business in ${city} between ${sevenDaysAgo} and ${today}. Only include permanent locations that are currently fully operational. Exclude pop-ups, food trucks without a permanent address, planned/announced openings, and locations that have already closed.
+  const cityBullets = cities.map((c) => `  - ${c}`).join("\n");
+  const label = cities.join(" | ");
+
+  const prompt = `Search the web for restaurants that officially opened for business between ${sevenDaysAgo} and ${today} in any of these cities:
+${cityBullets}
+
+Only include permanent locations that are currently fully operational. Exclude pop-ups, food trucks without a permanent address, planned/announced openings, and locations that have already closed.
 
 Return ONLY a JSON array, with no prose, no explanation, and no markdown code fencing. Each item must have exactly this shape:
-{"name": "Restaurant name", "address": "Street address, City, State"}
+{"name": "Restaurant name", "address": "Street address, City, State", "city": "<one of the input cities, copied exactly as written above>"}
 
-If you find no qualifying restaurants, return exactly: []`;
+If you find no qualifying restaurants in any of these cities, return exactly: []`;
 
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -201,7 +211,7 @@ If you find no qualifying restaurants, return exactly: []`;
     generationConfig: { temperature: 0.2 },
   };
 
-  if (debug) console.log(`[${city}] DEBUG request body:`, JSON.stringify(body));
+  if (debug) console.log(`[${label}] DEBUG request body:`, JSON.stringify(body));
 
   const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
     method: "POST",
@@ -211,7 +221,7 @@ If you find no qualifying restaurants, return exactly: []`;
 
   if (!res.ok) {
     const text = await res.text();
-    if (debug) console.log(`[${city}] DEBUG error response [${res.status}]:`, text);
+    if (debug) console.log(`[${label}] DEBUG error response [${res.status}]:`, text);
     if (res.status === 429) {
       throw new Error(`Gemini 429: ${text.slice(0, 1500)}`);
     }
@@ -222,9 +232,8 @@ If you find no qualifying restaurants, return exactly: []`;
   }
 
   const data = await res.json();
-  if (debug) console.log(`[${city}] DEBUG raw Gemini response:`, JSON.stringify(data));
+  if (debug) console.log(`[${label}] DEBUG raw Gemini response:`, JSON.stringify(data));
 
-  // Extract grounding metadata for debug surfacing
   const gm = data?.candidates?.[0]?.groundingMetadata;
   const grounding: GroundingInfo | undefined = gm
     ? {
@@ -236,7 +245,6 @@ If you find no qualifying restaurants, return exactly: []`;
       }
     : undefined;
 
-  // Concat all text parts (model sometimes splits)
   const parts = data?.candidates?.[0]?.content?.parts;
   let text = "";
   if (Array.isArray(parts)) {
@@ -244,32 +252,48 @@ If you find no qualifying restaurants, return exactly: []`;
   }
 
   if (!text) {
-    console.warn(`[${city}] no text in Gemini response`);
+    console.warn(`[${label}] no text in Gemini response`);
     return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 
-  // Strip optional ```json ... ``` fencing
   let jsonText = text;
   const fenceMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fenceMatch) jsonText = fenceMatch[1].trim();
-
-  // If model added prose, try to find the first JSON array in the text
   if (!jsonText.startsWith("[")) {
     const arrMatch = jsonText.match(/\[[\s\S]*\]/);
     if (arrMatch) jsonText = arrMatch[0];
   }
 
+  const citySet = new Set(cities);
+  // Build a normalized lookup so the model can be slightly off ("Detroit" vs "Detroit, MI")
+  const normCityMap = new Map<string, string>();
+  for (const c of cities) normCityMap.set(normalize(c.split(",")[0]), c);
+
   try {
     const parsed = JSON.parse(jsonText);
-    if (debug) console.log(`[${city}] DEBUG parsed candidates:`, JSON.stringify(parsed));
+    if (debug) console.log(`[${label}] DEBUG parsed candidates:`, JSON.stringify(parsed));
     const list = Array.isArray(parsed) ? parsed : [];
-    const candidates = list
-      .filter((r: any) => r && typeof r.name === "string" && typeof r.address === "string")
-      .map((r: any) => ({ name: r.name.trim(), address: r.address.trim() }));
+    const candidates: Candidate[] = [];
+    for (const r of list) {
+      if (!r || typeof r.name !== "string" || typeof r.address !== "string") continue;
+      const rawCity = typeof r.city === "string" ? r.city.trim() : "";
+      let resolvedCity: string | undefined;
+      if (citySet.has(rawCity)) {
+        resolvedCity = rawCity;
+      } else {
+        const norm = normalize(rawCity.split(",")[0] || "");
+        resolvedCity = normCityMap.get(norm);
+      }
+      if (!resolvedCity) {
+        console.warn(`[${label}] dropping candidate "${r.name}" — city "${rawCity}" not in batch`);
+        continue;
+      }
+      candidates.push({ name: r.name.trim(), address: r.address.trim(), city: resolvedCity });
+    }
     return { candidates, raw: debug ? data : undefined, grounding };
   } catch (e) {
-    console.warn(`[${city}] failed to parse Gemini text as JSON:`, e);
-    if (debug) console.log(`[${city}] DEBUG raw text:`, text);
+    console.warn(`[${label}] failed to parse Gemini text as JSON:`, e);
+    if (debug) console.log(`[${label}] DEBUG raw text:`, text);
     return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 }
@@ -371,7 +395,7 @@ Deno.serve(async (req) => {
     let lookbackDays = 30;
     let debug = false;
     let chunk: number | null = null;
-    let chunkSize = 8;
+    let chunkSize = 30;
     try {
       const url = new URL(req.url);
       const citiesParam = url.searchParams.get("cities");
@@ -393,7 +417,7 @@ Deno.serve(async (req) => {
       }
       if (chunkSizeParam) {
         const n = parseInt(chunkSizeParam, 10);
-        if (!Number.isNaN(n) && n > 0 && n <= 20) chunkSize = n;
+        if (!Number.isNaN(n) && n > 0 && n <= 50) chunkSize = n;
       }
       if (req.method === "POST") {
         const body = await req.json().catch(() => ({}));
@@ -405,7 +429,7 @@ Deno.serve(async (req) => {
         }
         if (body?.debug === true) debug = true;
         if (typeof body?.chunk === "number" && body.chunk >= 0) chunk = body.chunk;
-        if (typeof body?.chunk_size === "number" && body.chunk_size > 0 && body.chunk_size <= 20) {
+        if (typeof body?.chunk_size === "number" && body.chunk_size > 0 && body.chunk_size <= 50) {
           chunkSize = body.chunk_size;
         }
       }
@@ -439,18 +463,22 @@ Deno.serve(async (req) => {
 
     console.log(`[discover] starting scan: ${sevenDaysAgoStr} → ${todayStr} (${lookbackDays}d), ${citiesToScan.length} cities${debug ? " [DEBUG MODE]" : ""}`);
 
-    // Debug mode: hit only the first city, return raw AI response, skip Yelp/insert.
+    // Debug mode: hit the first batch only, return raw AI response, skip Yelp/insert.
     if (debug) {
-      const city = citiesToScan[0];
-      console.log(`[discover] DEBUG mode — single city only: ${city}`);
-      const { candidates, raw, grounding } = await callGeminiGrounded(city, todayStr, sevenDaysAgoStr, true);
+      const batch = citiesToScan.slice(0, BATCH_SIZE);
+      console.log(`[discover] DEBUG mode — single batch only: ${batch.join(" | ")}`);
+      const { candidates, raw, grounding } = await callGeminiGrounded(batch, todayStr, sevenDaysAgoStr, true);
+      const perCity: Record<string, number> = {};
+      for (const c of batch) perCity[c] = 0;
+      for (const cand of candidates) perCity[cand.city] = (perCity[cand.city] || 0) + 1;
       return new Response(
         JSON.stringify({
           ok: true,
           debug: true,
-          city,
+          cities: batch,
           window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
           candidate_count: candidates.length,
+          per_city_counts: perCity,
           candidates,
           grounding,
           raw_ai_response: raw,
@@ -470,19 +498,31 @@ Deno.serve(async (req) => {
 
     let totalInserted = 0;
 
-    for (const city of citiesToScan) {
+    // Process cities in batches — one Gemini grounded call per batch (cuts daily
+    // grounded-call usage to fit free-tier 20/day cap).
+    for (let i = 0; i < citiesToScan.length; i += BATCH_SIZE) {
+      const batch = citiesToScan.slice(i, i + BATCH_SIZE);
+      const batchLabel = batch.join(" | ");
 
-      const cityResult = { city, candidates: 0, verified: 0, inserted: 0, skipped: 0 } as typeof summary[number];
+      // Initialize per-city result rows so cities with zero candidates still appear.
+      const batchResults = new Map<string, typeof summary[number]>();
+      for (const c of batch) {
+        batchResults.set(c, { city: c, candidates: 0, verified: 0, inserted: 0, skipped: 0 });
+      }
+
       try {
-        const { candidates } = await callGeminiGrounded(city, todayStr, sevenDaysAgoStr);
-        cityResult.candidates = candidates.length;
-        console.log(`[${city}] AI returned ${candidates.length} candidates`);
+        const { candidates } = await callGeminiGrounded(batch, todayStr, sevenDaysAgoStr);
+        console.log(`[batch ${batchLabel}] AI returned ${candidates.length} candidates`);
 
         for (const cand of candidates) {
-          const hit = await verifyOnYelp(pool, cand, city);
+          const cityResult = batchResults.get(cand.city);
+          if (!cityResult) continue;
+          cityResult.candidates++;
+
+          const hit = await verifyOnYelp(pool, cand, cand.city);
           if (!hit) {
             cityResult.skipped++;
-            console.log(`[${city}] SKIP "${cand.name}" — no Yelp match`);
+            console.log(`[${cand.city}] SKIP "${cand.name}" — no Yelp match`);
             continue;
           }
           cityResult.verified++;
@@ -492,7 +532,7 @@ Deno.serve(async (req) => {
             .upsert(
               {
                 yelp_id: hit.yelp_id,
-                city,
+                city: cand.city,
                 first_seen_at: new Date().toISOString(),
                 is_new_discovery: true,
               },
@@ -501,33 +541,36 @@ Deno.serve(async (req) => {
             .select();
 
           if (insertErr) {
-            console.error(`[${city}] insert failed for ${hit.yelp_id}:`, insertErr.message);
+            console.error(`[${cand.city}] insert failed for ${hit.yelp_id}:`, insertErr.message);
             continue;
           }
           if (inserted && inserted.length > 0) {
             cityResult.inserted++;
             totalInserted++;
-            console.log(`[${city}] INSERTED ${hit.yelp_id} "${hit.yelp_name}"`);
+            console.log(`[${cand.city}] INSERTED ${hit.yelp_id} "${hit.yelp_name}"`);
           } else {
-            console.log(`[${city}] DUPLICATE ${hit.yelp_id} "${hit.yelp_name}" — already tracked`);
+            console.log(`[${cand.city}] DUPLICATE ${hit.yelp_id} "${hit.yelp_name}" — already tracked`);
           }
         }
 
-        // Log per-city scan
-        await supabase.from("scan_log").insert({
-          city,
-          new_count: cityResult.inserted,
-        });
+        // Log per-city scan rows for every city in the batch
+        for (const [city, r] of batchResults) {
+          await supabase.from("scan_log").insert({ city, new_count: r.inserted });
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        cityResult.error = msg;
-        console.error(`[${city}] city failed:`, msg);
+        console.error(`[batch ${batchLabel}] failed:`, msg);
+        for (const r of batchResults.values()) r.error = msg;
       }
-      summary.push(cityResult);
 
-      // Throttle 7s between cities to stay under Gemini grounded free tier (~10 RPM)
-      await new Promise((r) => setTimeout(r, 7000));
+      for (const r of batchResults.values()) summary.push(r);
+
+      // Throttle 7s between batches (well under Gemini's ~10 RPM grounded limit)
+      if (i + BATCH_SIZE < citiesToScan.length) {
+        await new Promise((r) => setTimeout(r, 7000));
+      }
     }
+
 
     const elapsedMs = Date.now() - startedAt;
     console.log("[discover] DONE", JSON.stringify({
