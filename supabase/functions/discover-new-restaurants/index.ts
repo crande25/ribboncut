@@ -342,6 +342,9 @@ interface VerifiedHit {
   candidate: Candidate;
   categoryAliases: string[];
   categoryTitles: string[];
+  priceLevel: number | null;
+  rating: number | null;
+  reviewCount: number | null;
 }
 
 interface VerifyResult {
@@ -402,6 +405,9 @@ async function verifyOnYelp(
         candidate,
         categoryAliases: (b.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean),
         categoryTitles: (b.categories || []).map((c: any) => String(c.title || "")).filter(Boolean),
+        priceLevel: typeof b.price === "string" && b.price.length > 0 ? b.price.length : null,
+        rating: typeof b.rating === "number" ? b.rating : null,
+        reviewCount: typeof b.review_count === "number" ? b.review_count : null,
       },
       reason: "match",
       yelpResultCount: businesses.length,
@@ -649,6 +655,25 @@ Deno.serve(async (req) => {
             console.error(`[cache ${cand.city}] categories upsert failed yelp_id=${hit.yelp_id}: ${catErr.message}`);
           } else {
             console.log(`[cache ${cand.city}] categories cached yelp_id=${hit.yelp_id} aliases=[${hit.categoryAliases.join(",")}]`);
+          }
+
+          // Cache metrics (price, rating, review count)
+          const { error: metErr } = await supabase
+            .from("restaurant_metrics")
+            .upsert(
+              {
+                yelp_id: hit.yelp_id,
+                price_level: hit.priceLevel,
+                rating: hit.rating,
+                review_count: hit.reviewCount,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "yelp_id" },
+            );
+          if (metErr) {
+            console.error(`[metrics ${cand.city}] upsert failed yelp_id=${hit.yelp_id}: ${metErr.message}`);
+          } else {
+            console.log(`[metrics ${cand.city}] cached yelp_id=${hit.yelp_id} price=${hit.priceLevel} rating=${hit.rating} reviews=${hit.reviewCount}`);
           }
         }
 

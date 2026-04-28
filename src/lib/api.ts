@@ -28,7 +28,9 @@ export async function getRestaurants(
   offset = 0,
   limit = 20,
   openedSince?: string,
-  dietaryFilters?: string[]
+  dietaryFilters?: string[],
+  priceFilters?: number[],
+  minRating?: number,
 ): Promise<GetRestaurantsResponse> {
   const params: Record<string, string> = {
     offset: String(offset),
@@ -42,6 +44,12 @@ export async function getRestaurants(
   }
   if (dietaryFilters && dietaryFilters.length > 0) {
     params.categories = dietaryFilters.join(",");
+  }
+  if (priceFilters && priceFilters.length > 0) {
+    params.prices = priceFilters.join(",");
+  }
+  if (minRating && minRating > 0) {
+    params.min_rating = String(minRating);
   }
 
   const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;

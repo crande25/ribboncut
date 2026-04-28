@@ -14,6 +14,8 @@ const PAGE_SIZE = 20;
 export function RestaurantFeed() {
   const [selectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
+  const [priceFilters] = useLocalStorage<number[]>("price_filters", []);
+  const [minRating] = useLocalStorage<number>("min_rating", 0);
   const [openedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [lastChecked, setLastChecked] = useLocalStorage<string>("last_checked", "");
@@ -59,11 +61,13 @@ export function RestaurantFeed() {
       offset,
       PAGE_SIZE,
       openedSince,
-      dietaryFilters.length > 0 ? dietaryFilters : undefined
+      dietaryFilters.length > 0 ? dietaryFilters : undefined,
+      priceFilters.length > 0 ? priceFilters : undefined,
+      minRating > 0 ? minRating : undefined,
     );
     const mapped = response.restaurants.map(mapToRestaurant);
     return { results: mapped, total: response.total, hasMore: offset + mapped.length < response.total };
-  }, [selectedCities, dietaryFilters, openedSince]);
+  }, [selectedCities, dietaryFilters, priceFilters, minRating, openedSince]);
 
   const fetchInitial = useCallback(async () => {
     setLoading(true);
@@ -99,7 +103,7 @@ export function RestaurantFeed() {
 
     setLoading(false);
     setLastChecked(new Date().toISOString());
-  }, [selectedCities, dietaryFilters, openedSince, fetchPage]);
+  }, [selectedCities, dietaryFilters, priceFilters, minRating, openedSince, fetchPage]);
 
   useEffect(() => {
     fetchInitial();

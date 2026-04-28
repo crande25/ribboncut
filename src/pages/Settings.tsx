@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin } from "lucide-react";
+import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin, DollarSign, Star } from "lucide-react";
 import { CityChecklist } from "@/components/CityChecklist";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
@@ -28,6 +28,20 @@ const themeOptions = [
   { value: "dark" as const, label: "Dark", icon: Moon },
 ];
 
+const priceOptions = [
+  { value: 1, label: "$" },
+  { value: 2, label: "$$" },
+  { value: 3, label: "$$$" },
+  { value: 4, label: "$$$$" },
+];
+
+const ratingOptions = [
+  { value: 0, label: "Any" },
+  { value: 3.5, label: "3.5★+" },
+  { value: 4.0, label: "4.0★+" },
+  { value: 4.5, label: "4.5★+" },
+];
+
 const scheduleOptions = [
   { value: "daily", label: "Daily" },
   { value: "3days", label: "Every 3 Days" },
@@ -37,6 +51,8 @@ const scheduleOptions = [
 export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
+  const [priceFilters, setPriceFilters] = useLocalStorage<number[]>("price_filters", []);
+  const [minRating, setMinRating] = useLocalStorage<number>("min_rating", 0);
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
@@ -99,6 +115,67 @@ export default function Settings() {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <DollarSign className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Price Range</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Pick the price tiers you're into. No selection = all prices.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {priceOptions.map((opt) => {
+            const isSelected = priceFilters.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                onClick={() =>
+                  setPriceFilters((prev) =>
+                    isSelected
+                      ? prev.filter((v) => v !== opt.value)
+                      : [...prev, opt.value]
+                  )
+                }
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  isSelected
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Star className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Minimum Rating</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Only show spots at or above this Yelp rating.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {ratingOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setMinRating(opt.value)}
+              className={cn(
+                "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                minRating === opt.value
+                  ? "bg-primary text-primary-foreground shadow-md"
+                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </section>
 

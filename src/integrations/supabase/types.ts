@@ -86,6 +86,30 @@ export type Database = {
         }
         Relationships: []
       }
+      restaurant_metrics: {
+        Row: {
+          price_level: number | null
+          rating: number | null
+          review_count: number | null
+          updated_at: string
+          yelp_id: string
+        }
+        Insert: {
+          price_level?: number | null
+          rating?: number | null
+          review_count?: number | null
+          updated_at?: string
+          yelp_id: string
+        }
+        Update: {
+          price_level?: number | null
+          rating?: number | null
+          review_count?: number | null
+          updated_at?: string
+          yelp_id?: string
+        }
+        Relationships: []
+      }
       restaurant_sightings: {
         Row: {
           city: string
