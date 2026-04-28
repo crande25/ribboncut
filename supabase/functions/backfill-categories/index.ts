@@ -186,18 +186,20 @@ Deno.serve(async (req) => {
     }
 
     const ids = sightings.map((s) => s.yelp_id);
-    const { data: existing } = await supabase
-      .from("restaurant_categories")
-      .select("yelp_id")
-      .in("yelp_id", ids);
-    const have = new Set((existing || []).map((r: any) => r.yelp_id));
-    const missing = sightings.filter((s) => !have.has(s.yelp_id));
+    const [{ data: existingCats }, { data: existingMetrics }] = await Promise.all([
+      supabase.from("restaurant_categories").select("yelp_id").in("yelp_id", ids),
+      supabase.from("restaurant_metrics").select("yelp_id").in("yelp_id", ids),
+    ]);
+    const haveCats = new Set((existingCats || []).map((r: any) => r.yelp_id));
+    const haveMetrics = new Set((existingMetrics || []).map((r: any) => r.yelp_id));
+    // Missing = sighting lacks EITHER cache row
+    const missing = sightings.filter((s) => !haveCats.has(s.yelp_id) || !haveMetrics.has(s.yelp_id));
 
-    console.log(`[backfill] scanned=${sightings.length} missing=${missing.length} days=${days} dry=${dryRun}`);
+    console.log(`[backfill] scanned=${sightings.length} missing=${missing.length} (cats_missing=${sightings.length - haveCats.size}, metrics_missing=${sightings.length - haveMetrics.size}) days=${days} dry=${dryRun}`);
 
     if (dryRun) {
       return new Response(JSON.stringify({
-        scanned: sightings.length, missing: missing.length, updated: 0,
+        scanned: sightings.length, missing: missing.length, updated: 0, metrics_updated: 0,
         sample: missing.slice(0, 10).map((m) => ({ yelp_id: m.yelp_id, city: m.city })),
         days, limit, dry_run: true,
       }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
