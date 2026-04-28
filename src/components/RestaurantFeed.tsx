@@ -103,7 +103,7 @@ export function RestaurantFeed() {
 
     setLoading(false);
     setLastChecked(new Date().toISOString());
-  }, [selectedCities, dietaryFilters, openedSince, fetchPage]);
+  }, [selectedCities, dietaryFilters, priceFilters, minRating, openedSince, fetchPage]);
 
   useEffect(() => {
     fetchInitial();
