@@ -120,6 +120,67 @@ export default function Settings() {
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
+          <DollarSign className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Price Range</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Pick the price tiers you're into. No selection = all prices.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {priceOptions.map((opt) => {
+            const isSelected = priceFilters.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                onClick={() =>
+                  setPriceFilters((prev) =>
+                    isSelected
+                      ? prev.filter((v) => v !== opt.value)
+                      : [...prev, opt.value]
+                  )
+                }
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  isSelected
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Star className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Minimum Rating</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Only show spots at or above this Yelp rating.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {ratingOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setMinRating(opt.value)}
+              className={cn(
+                "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                minRating === opt.value
+                  ? "bg-primary text-primary-foreground shadow-md"
+                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
           <Calendar className="h-4 w-4 text-primary" />
           <h2 className="text-sm font-semibold text-foreground">Opened Within</h2>
         </div>
