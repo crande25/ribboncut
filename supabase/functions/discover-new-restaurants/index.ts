@@ -429,7 +429,7 @@ Deno.serve(async (req) => {
         }
         if (body?.debug === true) debug = true;
         if (typeof body?.chunk === "number" && body.chunk >= 0) chunk = body.chunk;
-        if (typeof body?.chunk_size === "number" && body.chunk_size > 0 && body.chunk_size <= 20) {
+        if (typeof body?.chunk_size === "number" && body.chunk_size > 0 && body.chunk_size <= 50) {
           chunkSize = body.chunk_size;
         }
       }
