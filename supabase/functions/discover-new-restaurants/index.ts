@@ -213,7 +213,7 @@ If you find no qualifying restaurants, return exactly: []`;
     const text = await res.text();
     if (debug) console.log(`[${city}] DEBUG error response [${res.status}]:`, text);
     if (res.status === 429) {
-      throw new Error(`Gemini rate limited (free tier 15 RPM / 1500 req/day): ${text.slice(0, 200)}`);
+      throw new Error(`Gemini 429: ${text.slice(0, 1500)}`);
     }
     if (res.status === 403 && text.includes("API_KEY_INVALID")) {
       throw new Error(`Gemini API key invalid — rotate GEMINI_API_KEY: ${text.slice(0, 200)}`);
