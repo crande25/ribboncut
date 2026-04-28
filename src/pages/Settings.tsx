@@ -100,11 +100,7 @@ export default function Settings() {
               <button
                 key={opt.value}
                 onClick={() =>
-                  setPriceFilters((prev) =>
-                    isSelected
-                      ? prev.filter((v) => v !== opt.value)
-                      : [...prev, opt.value]
-                  )
+                  setPriceFilters(isSelected ? [] : [opt.value])
                 }
                 className={cn(
                   "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
