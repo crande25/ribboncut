@@ -417,7 +417,7 @@ Deno.serve(async (req) => {
       }
       if (chunkSizeParam) {
         const n = parseInt(chunkSizeParam, 10);
-        if (!Number.isNaN(n) && n > 0 && n <= 20) chunkSize = n;
+        if (!Number.isNaN(n) && n > 0 && n <= 50) chunkSize = n;
       }
       if (req.method === "POST") {
         const body = await req.json().catch(() => ({}));
