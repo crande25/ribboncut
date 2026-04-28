@@ -183,20 +183,27 @@ interface GroundingInfo {
 }
 
 async function callGeminiGrounded(
-  city: string,
+  cities: string[],
   today: string,
   sevenDaysAgo: string,
   debug = false,
 ): Promise<{ candidates: Candidate[]; raw?: any; grounding?: GroundingInfo }> {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
+  if (cities.length === 0) return { candidates: [] };
 
-  const prompt = `Search the web for restaurants that officially opened for business in ${city} between ${sevenDaysAgo} and ${today}. Only include permanent locations that are currently fully operational. Exclude pop-ups, food trucks without a permanent address, planned/announced openings, and locations that have already closed.
+  const cityBullets = cities.map((c) => `  - ${c}`).join("\n");
+  const label = cities.join(" | ");
+
+  const prompt = `Search the web for restaurants that officially opened for business between ${sevenDaysAgo} and ${today} in any of these cities:
+${cityBullets}
+
+Only include permanent locations that are currently fully operational. Exclude pop-ups, food trucks without a permanent address, planned/announced openings, and locations that have already closed.
 
 Return ONLY a JSON array, with no prose, no explanation, and no markdown code fencing. Each item must have exactly this shape:
-{"name": "Restaurant name", "address": "Street address, City, State"}
+{"name": "Restaurant name", "address": "Street address, City, State", "city": "<one of the input cities, copied exactly as written above>"}
 
-If you find no qualifying restaurants, return exactly: []`;
+If you find no qualifying restaurants in any of these cities, return exactly: []`;
 
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -204,7 +211,7 @@ If you find no qualifying restaurants, return exactly: []`;
     generationConfig: { temperature: 0.2 },
   };
 
-  if (debug) console.log(`[${city}] DEBUG request body:`, JSON.stringify(body));
+  if (debug) console.log(`[${label}] DEBUG request body:`, JSON.stringify(body));
 
   const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
     method: "POST",
@@ -214,7 +221,7 @@ If you find no qualifying restaurants, return exactly: []`;
 
   if (!res.ok) {
     const text = await res.text();
-    if (debug) console.log(`[${city}] DEBUG error response [${res.status}]:`, text);
+    if (debug) console.log(`[${label}] DEBUG error response [${res.status}]:`, text);
     if (res.status === 429) {
       throw new Error(`Gemini 429: ${text.slice(0, 1500)}`);
     }
@@ -225,9 +232,8 @@ If you find no qualifying restaurants, return exactly: []`;
   }
 
   const data = await res.json();
-  if (debug) console.log(`[${city}] DEBUG raw Gemini response:`, JSON.stringify(data));
+  if (debug) console.log(`[${label}] DEBUG raw Gemini response:`, JSON.stringify(data));
 
-  // Extract grounding metadata for debug surfacing
   const gm = data?.candidates?.[0]?.groundingMetadata;
   const grounding: GroundingInfo | undefined = gm
     ? {
@@ -239,7 +245,6 @@ If you find no qualifying restaurants, return exactly: []`;
       }
     : undefined;
 
-  // Concat all text parts (model sometimes splits)
   const parts = data?.candidates?.[0]?.content?.parts;
   let text = "";
   if (Array.isArray(parts)) {
@@ -247,32 +252,48 @@ If you find no qualifying restaurants, return exactly: []`;
   }
 
   if (!text) {
-    console.warn(`[${city}] no text in Gemini response`);
+    console.warn(`[${label}] no text in Gemini response`);
     return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 
-  // Strip optional ```json ... ``` fencing
   let jsonText = text;
   const fenceMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fenceMatch) jsonText = fenceMatch[1].trim();
-
-  // If model added prose, try to find the first JSON array in the text
   if (!jsonText.startsWith("[")) {
     const arrMatch = jsonText.match(/\[[\s\S]*\]/);
     if (arrMatch) jsonText = arrMatch[0];
   }
 
+  const citySet = new Set(cities);
+  // Build a normalized lookup so the model can be slightly off ("Detroit" vs "Detroit, MI")
+  const normCityMap = new Map<string, string>();
+  for (const c of cities) normCityMap.set(normalize(c.split(",")[0]), c);
+
   try {
     const parsed = JSON.parse(jsonText);
-    if (debug) console.log(`[${city}] DEBUG parsed candidates:`, JSON.stringify(parsed));
+    if (debug) console.log(`[${label}] DEBUG parsed candidates:`, JSON.stringify(parsed));
     const list = Array.isArray(parsed) ? parsed : [];
-    const candidates = list
-      .filter((r: any) => r && typeof r.name === "string" && typeof r.address === "string")
-      .map((r: any) => ({ name: r.name.trim(), address: r.address.trim() }));
+    const candidates: Candidate[] = [];
+    for (const r of list) {
+      if (!r || typeof r.name !== "string" || typeof r.address !== "string") continue;
+      const rawCity = typeof r.city === "string" ? r.city.trim() : "";
+      let resolvedCity: string | undefined;
+      if (citySet.has(rawCity)) {
+        resolvedCity = rawCity;
+      } else {
+        const norm = normalize(rawCity.split(",")[0] || "");
+        resolvedCity = normCityMap.get(norm);
+      }
+      if (!resolvedCity) {
+        console.warn(`[${label}] dropping candidate "${r.name}" — city "${rawCity}" not in batch`);
+        continue;
+      }
+      candidates.push({ name: r.name.trim(), address: r.address.trim(), city: resolvedCity });
+    }
     return { candidates, raw: debug ? data : undefined, grounding };
   } catch (e) {
-    console.warn(`[${city}] failed to parse Gemini text as JSON:`, e);
-    if (debug) console.log(`[${city}] DEBUG raw text:`, text);
+    console.warn(`[${label}] failed to parse Gemini text as JSON:`, e);
+    if (debug) console.log(`[${label}] DEBUG raw text:`, text);
     return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 }
