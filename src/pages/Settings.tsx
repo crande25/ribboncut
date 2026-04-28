@@ -126,7 +126,7 @@ export default function Settings() {
           <h2 className="text-sm font-semibold text-foreground">Minimum Rating</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          Pick one or more thresholds. We'll use the lowest as your minimum.
+          Pick one threshold, or none for no rating filter.
         </p>
         <div className="flex flex-wrap gap-2">
           {ratingOptions.map((opt) => {
@@ -135,11 +135,9 @@ export default function Settings() {
               <button
                 key={opt.value}
                 onClick={() => {
-                  const next = isSelected
-                    ? ratingThresholds.filter((v) => v !== opt.value)
-                    : [...ratingThresholds, opt.value];
+                  const next = isSelected ? [] : [opt.value];
                   setRatingThresholds(next);
-                  setMinRating(next.length > 0 ? Math.min(...next) : 0);
+                  setMinRating(next.length > 0 ? next[0] : 0);
                 }}
                 className={cn(
                   "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
