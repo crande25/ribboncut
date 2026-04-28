@@ -125,17 +125,49 @@ Deno.serve(async (req) => {
       categoryMap.set(row.yelp_id, row.aliases || []);
     }
 
-    // Strict pre-filter: if dietary filter is active, drop sightings without
-    // a category cache hit OR without a matching alias. This avoids paying for
-    // Yelp detail calls on rows we'd discard anyway.
+    // Batch-fetch cached metrics (price, rating)
+    const { data: metricsData } = await supabase
+      .from("restaurant_metrics")
+      .select("yelp_id, price_level, rating, review_count")
+      .in("yelp_id", yelpIds);
+
+    const metricsMap = new Map<string, { price_level: number | null; rating: number | null; review_count: number | null }>();
+    for (const row of metricsData || []) {
+      metricsMap.set(row.yelp_id, {
+        price_level: row.price_level,
+        rating: row.rating !== null ? Number(row.rating) : null,
+        review_count: row.review_count,
+      });
+    }
+
+    // Strict pre-filter: drop sightings that don't satisfy active filters before
+    // paying for Yelp detail calls. Mirrors the dietary-filter behavior.
     let workingSightings = sightings;
+    let droppedNoCache = 0;
+    let droppedPredicate = 0;
     if (dietaryCategories) {
       const filters = dietaryCategories.split(",").map((c) => c.trim().toLowerCase());
-      workingSightings = sightings.filter((s: any) => {
+      workingSightings = workingSightings.filter((s: any) => {
         const aliases = categoryMap.get(s.yelp_id);
         if (!aliases) return false; // strict: exclude unknowns
         return filters.some((f) => aliases.includes(f));
       });
+    }
+    if (hasPriceFilter || hasRatingFilter) {
+      workingSightings = workingSightings.filter((s: any) => {
+        const m = metricsMap.get(s.yelp_id);
+        if (!m) { droppedNoCache++; return false; } // strict: exclude unknowns
+        if (hasPriceFilter && (m.price_level === null || !selectedPrices.includes(m.price_level))) {
+          droppedPredicate++;
+          return false;
+        }
+        if (hasRatingFilter && (m.rating === null || m.rating < minRating)) {
+          droppedPredicate++;
+          return false;
+        }
+        return true;
+      });
+      console.log(`[filter] price/rating dropped no-cache=${droppedNoCache} predicate-fail=${droppedPredicate}`);
     }
 
     // Fetch live Yelp details for each (post-filter) sighting via the rotating key pool
