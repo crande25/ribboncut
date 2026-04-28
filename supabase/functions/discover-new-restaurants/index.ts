@@ -395,7 +395,7 @@ Deno.serve(async (req) => {
     let lookbackDays = 30;
     let debug = false;
     let chunk: number | null = null;
-    let chunkSize = 8;
+    let chunkSize = 30;
     try {
       const url = new URL(req.url);
       const citiesParam = url.searchParams.get("cities");
