@@ -54,9 +54,6 @@ export default function Settings() {
     <div className="space-y-8">
       <div>
         <h1 className="text-xl font-bold text-foreground">Settings ⚙️</h1>
-        <p className="text-xs text-muted-foreground mt-1">
-          Pick your SE Michigan locations and we'll do the rest.
-        </p>
       </div>
 
       <section className="space-y-3">
