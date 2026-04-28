@@ -404,7 +404,26 @@ Deno.serve(async (req) => {
     const todayStr = formatDate(today);
     const sevenDaysAgoStr = formatDate(sevenDaysAgo);
 
-    console.log(`[discover] starting scan: ${sevenDaysAgoStr} → ${todayStr} (${lookbackDays}d), ${citiesToScan.length} cities`);
+    console.log(`[discover] starting scan: ${sevenDaysAgoStr} → ${todayStr} (${lookbackDays}d), ${citiesToScan.length} cities${debug ? " [DEBUG MODE]" : ""}`);
+
+    // Debug mode: hit only the first city, return raw AI response, skip Yelp/insert.
+    if (debug) {
+      const city = citiesToScan[0];
+      console.log(`[discover] DEBUG mode — single city only: ${city}`);
+      const { candidates, raw } = await callLovableAI(city, todayStr, sevenDaysAgoStr, true);
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          debug: true,
+          city,
+          window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
+          candidate_count: candidates.length,
+          candidates,
+          raw_ai_response: raw,
+        }, null, 2),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const summary: Array<{
       city: string;
@@ -421,7 +440,7 @@ Deno.serve(async (req) => {
 
       const cityResult = { city, candidates: 0, verified: 0, inserted: 0, skipped: 0 } as typeof summary[number];
       try {
-        const candidates = await callLovableAI(city, todayStr, sevenDaysAgoStr);
+        const { candidates } = await callLovableAI(city, todayStr, sevenDaysAgoStr);
         cityResult.candidates = candidates.length;
         console.log(`[${city}] AI returned ${candidates.length} candidates`);
 
