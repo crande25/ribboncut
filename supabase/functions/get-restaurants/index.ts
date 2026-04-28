@@ -44,6 +44,14 @@ Deno.serve(async (req) => {
     const offset = parseInt(url.searchParams.get("offset") || "0", 10);
     const limit = Math.min(parseInt(url.searchParams.get("limit") || "20", 10), 50);
     const dietaryCategories = url.searchParams.get("categories");
+    const pricesParam = url.searchParams.get("prices");
+    const minRatingParam = url.searchParams.get("min_rating");
+    const selectedPrices = pricesParam
+      ? pricesParam.split(",").map((p) => parseInt(p.trim(), 10)).filter((n) => !Number.isNaN(n))
+      : [];
+    const minRating = minRatingParam ? parseFloat(minRatingParam) : 0;
+    const hasPriceFilter = selectedPrices.length > 0;
+    const hasRatingFilter = minRating > 0;
 
     // Build PostgREST query
     const filters: string[] = [];
