@@ -36,7 +36,6 @@ const priceOptions = [
 ];
 
 const ratingOptions = [
-  { value: 0, label: "Any" },
   { value: 3.5, label: "3.5★+" },
   { value: 4.0, label: "4.0★+" },
   { value: 4.5, label: "4.5★+" },
