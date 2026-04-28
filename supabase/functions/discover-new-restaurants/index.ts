@@ -400,6 +400,8 @@ async function verifyOnYelp(
         yelp_name: b.name,
         yelp_city: yelpCity || targetCity,
         candidate,
+        categoryAliases: (b.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean),
+        categoryTitles: (b.categories || []).map((c: any) => String(c.title || "")).filter(Boolean),
       },
       reason: "match",
       yelpResultCount: businesses.length,
