@@ -313,12 +313,49 @@ Deno.serve(async (req) => {
     const pool = new YelpKeyPool(supabase);
     await pool.load();
 
+    // Optional on-demand override: pipe-delimited city list (cities contain commas).
+    // Accepts ?cities=Detroit,%20MI|Ann%20Arbor,%20MI  OR  JSON body { cities: [...], days?: 7 }
+    let citiesToScan: string[] = [...SE_MICHIGAN_CITIES];
+    let lookbackDays = 7;
+    try {
+      const url = new URL(req.url);
+      const citiesParam = url.searchParams.get("cities");
+      const daysParam = url.searchParams.get("days");
+      if (citiesParam) {
+        citiesToScan = citiesParam.split("|").map((c) => c.trim()).filter(Boolean);
+      }
+      if (daysParam) {
+        const n = parseInt(daysParam, 10);
+        if (!Number.isNaN(n) && n > 0 && n <= 90) lookbackDays = n;
+      }
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        if (Array.isArray(body?.cities) && body.cities.length > 0) {
+          citiesToScan = body.cities.map((c: any) => String(c).trim()).filter(Boolean);
+        }
+        if (typeof body?.days === "number" && body.days > 0 && body.days <= 90) {
+          lookbackDays = body.days;
+        }
+      }
+    } catch (_e) { /* ignore parse errors, use defaults */ }
+
+    // Validate against known cities (drop unknowns rather than waste AI calls)
+    const knownSet = new Set(SE_MICHIGAN_CITIES);
+    const unknown = citiesToScan.filter((c) => !knownSet.has(c));
+    citiesToScan = citiesToScan.filter((c) => knownSet.has(c));
+    if (unknown.length > 0) console.warn(`[discover] ignoring unknown cities: ${unknown.join(" | ")}`);
+    if (citiesToScan.length === 0) {
+      return new Response(JSON.stringify({ error: "No valid cities to scan" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const today = new Date();
-    const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 3600 * 1000);
+    const sevenDaysAgo = new Date(today.getTime() - lookbackDays * 24 * 3600 * 1000);
     const todayStr = formatDate(today);
     const sevenDaysAgoStr = formatDate(sevenDaysAgo);
 
-    console.log(`[discover] starting daily scan: ${sevenDaysAgoStr} → ${todayStr}, ${SE_MICHIGAN_CITIES.length} cities`);
+    console.log(`[discover] starting scan: ${sevenDaysAgoStr} → ${todayStr} (${lookbackDays}d), ${citiesToScan.length} cities`);
 
     const summary: Array<{
       city: string;
@@ -331,7 +368,8 @@ Deno.serve(async (req) => {
 
     let totalInserted = 0;
 
-    for (const city of SE_MICHIGAN_CITIES) {
+    for (const city of citiesToScan) {
+
       const cityResult = { city, candidates: 0, verified: 0, inserted: 0, skipped: 0 } as typeof summary[number];
       try {
         const candidates = await callLovableAI(city, todayStr, sevenDaysAgoStr);
