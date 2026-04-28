@@ -1,42 +1,78 @@
-## Goal
+## Secret-leakage audit
 
-Remove 9 cities from the SE Michigan list across the frontend and edge function. Result: 20 cities → `ceil(20/3) = 7` Gemini grounded calls per daily harvest (down from 10), saving 3 calls/day against the free-tier cap.
+I scanned every `console.*` call, every place env vars are read, and every outbound `fetch` in the edge functions and client. Here is what I found, ranked by real risk.
 
-## Cities removed
+### 1. HIGH-ish: Gemini API key in URL query string
 
-Shelby Township, Wyandotte, Waterford, Grosse Pointe, Taylor, Pontiac, Clinton Township, Warren, Sterling Heights.
-
-## Cities kept (20)
-
-Detroit, Ann Arbor, Novi, Troy, Royal Oak, Birmingham, Dearborn, Livonia, Canton, Plymouth, Farmington Hills, Southfield, Rochester Hills, West Bloomfield, Ferndale, Ypsilanti, Northville, Bloomfield Hills, Monroe, Port Huron.
-
-## Files touched
-
-1. **`src/lib/seMichiganCities.ts`** — drop the 9 cities from the exported array. The `SEMichiganCity` type narrows automatically. Anywhere the frontend filters/searches/displays the city list (e.g. `CityChecklist`, `CitySearch`, settings) updates automatically since they all import from this file.
-
-2. **`supabase/functions/discover-new-restaurants/index.ts`** — drop the same 9 cities from the inline `SE_MICHIGAN_CITIES` array (lines 127–135). This is the master list used for chunking, validation (`knownSet`), and batching. `BATCH_SIZE = 3` stays as-is → 7 batches per run.
-
-## Data already in the database
-
-Existing `restaurant_sightings` and `scan_log` rows for the removed cities are **not deleted**. They'll simply stop receiving new entries. The frontend filters discoveries through the city list, so removed-city restaurants will no longer appear in the feed (they'll be filtered out). If you'd rather purge them, say the word and I'll add a cleanup migration — defaulting to "keep history, hide from UI."
-
-## Cron
-
-No cron change needed. The single daily job at 06:00 UTC still calls the function with `{}`; it'll now process 20 cities in 7 batches (~50–70s runtime) instead of 29 in 10 batches.
-
-## Verification after deploy
-
-Quick debug call to confirm the new list is in effect and a removed city is rejected:
-
-```
-POST /discover-new-restaurants
-body: {"cities":["Warren, MI","Detroit, MI"], "debug":true}
+`supabase/functions/discover-new-restaurants/index.ts:225`
+```ts
+res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, { ... });
 ```
 
-Expect: log line "ignoring unknown cities: Warren, MI" and the debug response covering only Detroit.
+We never log this URL directly today, BUT:
+- Any future `console.log(url)` or unhandled fetch error that includes `res.url` would dump the key into Supabase edge logs (which are retained and searchable).
+- Google's own server-side logs see the key in the query string (unavoidable for the v1beta REST endpoint, but we can stop mirroring it on our side).
+- If Deno ever surfaces the URL inside a thrown `TypeError` (network failures sometimes do), the key would land in the catch-block `console.error("[discover] fatal:", msg)` at line 662.
 
-## Tradeoffs / risks
+**Fix**: send the key via header instead of query string. Google's Gemini REST API accepts `x-goog-api-key: <KEY>`. Then the URL is safe to log.
 
-- **History stays in DB**: feed already filters by the active city list, so removed cities silently disappear from the UI. No broken links or 404s.
-- **Yelp pool / quotas**: unaffected.
-- **Free tier headroom**: 7 calls/day leaves 13 calls of headroom under the 20/day cap (was 10).
+### 2. LOW: Yelp keys in `Authorization: Bearer …` headers
+
+`supabase/functions/get-restaurants/yelpKeys.ts:143` and `discover-new-restaurants/index.ts:94`. Headers are never logged, response body errors are sliced to 200 chars and don't echo the request header. Safe today.
+
+**Hardening**: keep an explicit rule never to log `req`/`fetch` objects whole — only specific fields. Already followed.
+
+### 3. LOW: Service-role key usage
+
+`get-restaurants/index.ts:70-71` puts `SUPABASE_SERVICE_ROLE_KEY` into request headers to PostgREST. Never logged. The error path at line 79 logs only `dbRes.status` and `errText` (response body, not request headers). Safe.
+
+### 4. NOISE, not a leak: key *names* (not values) appear in logs
+
+Lines like `[YelpKeyPool] marking YELP_API_KEY_2 EXHAUSTED…` log the env var **name**, not its value. Same for `key=${detailRes.keyName}` at `get-restaurants/index.ts:119`. This is fine — names are not secrets — but worth noting so we don't accidentally "fix" it by swapping in `key.value`.
+
+### 5. Database
+
+- `api_key_status` stores `key_name` (e.g. `"YELP_API_KEY_2"`), `last_status`, `last_error`. No key values written. Safe.
+- `restaurant_sightings`, `scan_log`, `atmosphere_cache`: business data only.
+- All four tables have public SELECT RLS, so we must continue to never write secrets into them. Currently true.
+
+### 6. Disk
+
+Edge functions are stateless; nothing is written to disk. Client writes only `useLocalStorage` keys (city selections, theme) and a `useDeviceId` UUID — no secrets.
+
+### 7. Client (`src/`)
+
+Only `VITE_SUPABASE_PUBLISHABLE_KEY` and `VITE_SUPABASE_URL` are referenced — both are publishable by design. No service role, Yelp, Gemini, or Google Places keys touch the client.
+
+---
+
+## Proposed changes (single file)
+
+**Edit `supabase/functions/discover-new-restaurants/index.ts` around line 225**, switching the Gemini call from query-string auth to header auth:
+
+```ts
+res = await fetch(GEMINI_URL, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "x-goog-api-key": GEMINI_API_KEY,
+  },
+  body: JSON.stringify(body),
+});
+```
+
+That's the only code change. Optional follow-ups (ask before doing):
+- Add a tiny `redact()` helper that masks anything matching `/AIza[0-9A-Za-z_-]{20,}/` and Yelp-shaped tokens before any `console.error` in catch blocks. Defense in depth.
+- Add a one-line note at the top of each edge function: "Never log full request/response objects; log status + slice(0,200) of body only."
+
+### Out of scope / not changing
+- Yelp `Authorization: Bearer` usage (already safe; header, not URL).
+- Existing key-name logging (names ≠ secrets).
+- Database schema (no secrets stored).
+
+### Verification after change
+1. Re-run a small discover batch (e.g. Detroit only).
+2. `supabase--edge_function_logs discover-new-restaurants` and grep for `AIza` / `key=` — should be zero hits.
+3. Confirm Gemini still returns 200 with the header form.
+
+Approve and I'll make the edit and verify with a single Detroit batch.
