@@ -366,7 +366,7 @@ Deno.serve(async (req) => {
     // Optional on-demand override: pipe-delimited city list (cities contain commas).
     // Accepts ?cities=Detroit,%20MI|Ann%20Arbor,%20MI  OR  JSON body { cities: [...], days?: 7 }
     let citiesToScan: string[] = [...SE_MICHIGAN_CITIES];
-    let lookbackDays = 7;
+    let lookbackDays = 30;
     let debug = false;
     try {
       const url = new URL(req.url);
