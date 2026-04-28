@@ -365,14 +365,20 @@ Deno.serve(async (req) => {
 
     // Optional on-demand override: pipe-delimited city list (cities contain commas).
     // Accepts ?cities=Detroit,%20MI|Ann%20Arbor,%20MI  OR  JSON body { cities: [...], days?: 7 }
+    // Cron uses ?chunk=N&chunk_size=8 to slice the master city list (stays under
+    // edge-function 150s ceiling and Gemini's ~10 RPM grounded free tier).
     let citiesToScan: string[] = [...SE_MICHIGAN_CITIES];
     let lookbackDays = 30;
     let debug = false;
+    let chunk: number | null = null;
+    let chunkSize = 8;
     try {
       const url = new URL(req.url);
       const citiesParam = url.searchParams.get("cities");
       const daysParam = url.searchParams.get("days");
       const debugParam = url.searchParams.get("debug");
+      const chunkParam = url.searchParams.get("chunk");
+      const chunkSizeParam = url.searchParams.get("chunk_size");
       if (citiesParam) {
         citiesToScan = citiesParam.split("|").map((c) => c.trim()).filter(Boolean);
       }
@@ -381,6 +387,14 @@ Deno.serve(async (req) => {
         if (!Number.isNaN(n) && n > 0 && n <= 90) lookbackDays = n;
       }
       if (debugParam === "1" || debugParam === "true") debug = true;
+      if (chunkParam !== null) {
+        const n = parseInt(chunkParam, 10);
+        if (!Number.isNaN(n) && n >= 0) chunk = n;
+      }
+      if (chunkSizeParam) {
+        const n = parseInt(chunkSizeParam, 10);
+        if (!Number.isNaN(n) && n > 0 && n <= 20) chunkSize = n;
+      }
       if (req.method === "POST") {
         const body = await req.json().catch(() => ({}));
         if (Array.isArray(body?.cities) && body.cities.length > 0) {
@@ -390,6 +404,10 @@ Deno.serve(async (req) => {
           lookbackDays = body.days;
         }
         if (body?.debug === true) debug = true;
+        if (typeof body?.chunk === "number" && body.chunk >= 0) chunk = body.chunk;
+        if (typeof body?.chunk_size === "number" && body.chunk_size > 0 && body.chunk_size <= 20) {
+          chunkSize = body.chunk_size;
+        }
       }
     } catch (_e) { /* ignore parse errors, use defaults */ }
 
@@ -398,9 +416,19 @@ Deno.serve(async (req) => {
     const unknown = citiesToScan.filter((c) => !knownSet.has(c));
     citiesToScan = citiesToScan.filter((c) => knownSet.has(c));
     if (unknown.length > 0) console.warn(`[discover] ignoring unknown cities: ${unknown.join(" | ")}`);
+
+    // Apply chunking AFTER validation so chunk indices are stable.
+    if (chunk !== null) {
+      const start = chunk * chunkSize;
+      const end = start + chunkSize;
+      const sliced = citiesToScan.slice(start, end);
+      console.log(`[discover] chunk=${chunk} size=${chunkSize} → cities ${start}..${end - 1} (${sliced.length} of ${citiesToScan.length})`);
+      citiesToScan = sliced;
+    }
+
     if (citiesToScan.length === 0) {
-      return new Response(JSON.stringify({ error: "No valid cities to scan" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      return new Response(JSON.stringify({ ok: true, message: "No cities in this chunk", chunk }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
