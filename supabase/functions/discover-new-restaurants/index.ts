@@ -309,6 +309,17 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Restrict callers: only the service role key (used by pg_cron and the
+    // Lovable server-side curl tool) is allowed. The anon key, user JWTs,
+    // or no auth all get rejected.
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (!token || token !== SUPABASE_SERVICE_ROLE_KEY) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const pool = new YelpKeyPool(supabase);
     await pool.load();
