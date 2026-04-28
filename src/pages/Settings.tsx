@@ -51,7 +51,8 @@ export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
   const [priceFilters, setPriceFilters] = useLocalStorage<number[]>("price_filters", []);
-  const [minRating, setMinRating] = useLocalStorage<number>("min_rating", 0);
+  const [ratingThresholds, setRatingThresholds] = useLocalStorage<number[]>("rating_thresholds", []);
+  const [, setMinRating] = useLocalStorage<number>("min_rating", 0);
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
