@@ -656,6 +656,25 @@ Deno.serve(async (req) => {
           } else {
             console.log(`[cache ${cand.city}] categories cached yelp_id=${hit.yelp_id} aliases=[${hit.categoryAliases.join(",")}]`);
           }
+
+          // Cache metrics (price, rating, review count)
+          const { error: metErr } = await supabase
+            .from("restaurant_metrics")
+            .upsert(
+              {
+                yelp_id: hit.yelp_id,
+                price_level: hit.priceLevel,
+                rating: hit.rating,
+                review_count: hit.reviewCount,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "yelp_id" },
+            );
+          if (metErr) {
+            console.error(`[metrics ${cand.city}] upsert failed yelp_id=${hit.yelp_id}: ${metErr.message}`);
+          } else {
+            console.log(`[metrics ${cand.city}] cached yelp_id=${hit.yelp_id} price=${hit.priceLevel} rating=${hit.rating} reviews=${hit.reviewCount}`);
+          }
         }
 
         // Log per-city scan rows for every city in the batch
