@@ -1,78 +1,99 @@
-## Secret-leakage audit
+# Plan: Cache price & rating + add Settings filters
 
-I scanned every `console.*` call, every place env vars are read, and every outbound `fetch` in the edge functions and client. Here is what I found, ranked by real risk.
+Same pattern as the dietary cache: store cheap, filterable signal in the DB so we can pre-filter sightings before paying for live Yelp detail calls.
 
-### 1. HIGH-ish: Gemini API key in URL query string
+## 1. Schema
 
-`supabase/functions/discover-new-restaurants/index.ts:225`
-```ts
-res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, { ... });
+New table **`restaurant_metrics`** (separate from `restaurant_categories` to keep cache concerns isolated and TTLs independent):
+
+- `yelp_id text PK`
+- `price_level smallint` — 1–4, mapped from Yelp's `$`/`$$`/`$$$`/`$$$$`. Nullable (Yelp doesn't always return a price).
+- `rating numeric(2,1)` — 0.0–5.0 in 0.5 steps.
+- `review_count integer`
+- `updated_at timestamptz default now()`
+- RLS: public `SELECT`; writes server-only (mirrors `restaurant_categories`).
+- Indexes: `(price_level)`, `(rating)`. Skip composite — Postgres will bitmap-AND when both filters are active and the result set is small (≤ page size).
+
+Why `smallint` not text: lets us do `price_level <= 2` for "$$ or cheaper" instead of string matching.
+
+## 2. Settings UI
+
+Two new sections under "Dietary Requirements":
+
+**Price Range** — pill multi-select: `$`, `$$`, `$$$`, `$$$$`. Stored as `useLocalStorage<number[]>("price_filters", [])`. Empty array = no filter.
+
+**Minimum Rating** — single-select pills: `Any`, `3.5★+`, `4.0★+`, `4.5★+`. Stored as `useLocalStorage<number>("min_rating", 0)`. `0` = no filter.
+
+Both follow the existing `dietaryOptions` styling so they feel native.
+
+## 3. Wire into get-restaurants
+
+- `src/lib/api.ts` `getRestaurants()` gains `priceFilters?: number[]` and `minRating?: number` params, passed as query string `prices=1,2` and `min_rating=4.0`.
+- `RestaurantFeed.tsx` reads both from localStorage and forwards them; add to the dependency arrays alongside `dietaryFilters`.
+- Edge function `get-restaurants`:
+  - Batch-fetch `restaurant_metrics` for the page's `yelp_id`s alongside the existing categories/atmosphere fetches.
+  - **Strict pre-filter** (matches the dietary behavior the user picked): if either filter is active, drop sightings with no metrics row OR whose metrics fail the predicate, *before* the Yelp detail loop.
+  - Lazy-write metrics from the live Yelp response when we ended up calling Yelp anyway and the row was missing (mirrors what we already do for categories).
+
+## 4. Harvest update (`discover-new-restaurants`)
+
+Yelp's `/businesses/search` response already returns `price`, `rating`, and `review_count` per business — no extra API calls needed.
+
+- Extend `VerifiedHit` with `priceLevel`, `rating`, `reviewCount` captured at the same point we capture `categoryAliases`.
+- Right after the existing `restaurant_categories` upsert, upsert `restaurant_metrics`. Log `[metrics CITY] cached yelp_id=… price=2 rating=4.3 reviews=128`.
+- Price string → number helper: count `$` chars; `null` if absent.
+
+## 5. On-demand backfill
+
+Extend the existing `backfill-categories` edge function rather than create a parallel one — it already loops recent sightings and calls Yelp details. Rename internally to also populate metrics, but **keep the route name** to avoid breakage. New behavior:
+
+- For each missing-categories row, write **both** `restaurant_categories` and `restaurant_metrics` from the same `/businesses/{id}` response.
+- "Missing" check becomes: row missing in *either* cache table. (Two `IN` queries, union the gaps.)
+- Response JSON gains `metrics_updated` counter alongside the existing `updated`.
+
+Trigger on demand by asking Lovable to "backfill caches for the last 30 days" — same flow as before.
+
+## 6. Logging additions
+
+- Harvest: `[metrics CITY] cached yelp_id=X price=N rating=R reviews=K`
+- get-restaurants pre-filter: `[filter] price/rating dropped N sightings (no-cache=A, predicate-fail=B)`
+- Backfill: `[backfill] cached metrics yelp_id=X price=… rating=…`
+
+## Out of scope (ask if you want them)
+
+- Rating *range* (max rating) — not a typical user need.
+- Showing how many results each filter combo would yield in real time.
+- TTL / refresh job for stale metrics rows (rating drifts over time). Right now metrics get refreshed whenever we re-verify a sighting via harvest or call get-restaurants on a row that *was* cached but stale — we don't refresh stale-but-present rows. Can add a `--force` mode to backfill later.
+
+## Technical Details
+
+**Files touched**
+
+- migration: create `restaurant_metrics` + RLS + indexes
+- `src/pages/Settings.tsx`: two new sections (~40 lines)
+- `src/components/RestaurantFeed.tsx`: read 2 new localStorage keys, pass to API, add to deps
+- `src/lib/api.ts`: extend `getRestaurants` signature + query params
+- `supabase/functions/get-restaurants/index.ts`: parse `prices` / `min_rating`, batch-fetch metrics, strict pre-filter, lazy upsert
+- `supabase/functions/discover-new-restaurants/index.ts`: extend `VerifiedHit`, capture from search hit, upsert after categories
+- `supabase/functions/backfill-categories/index.ts`: also populate metrics; expand "missing" check; add counter
+
+**Price mapping**
+
+```text
+"$"     -> 1
+"$$"    -> 2
+"$$$"   -> 3
+"$$$$"  -> 4
+absent  -> null  (excluded by any active price filter)
 ```
 
-We never log this URL directly today, BUT:
-- Any future `console.log(url)` or unhandled fetch error that includes `res.url` would dump the key into Supabase edge logs (which are retained and searchable).
-- Google's own server-side logs see the key in the query string (unavoidable for the v1beta REST endpoint, but we can stop mirroring it on our side).
-- If Deno ever surfaces the URL inside a thrown `TypeError` (network failures sometimes do), the key would land in the catch-block `console.error("[discover] fatal:", msg)` at line 662.
+**Pre-filter SQL-equivalent (done in code against the in-memory map)**
 
-**Fix**: send the key via header instead of query string. Google's Gemini REST API accepts `x-goog-api-key: <KEY>`. Then the URL is safe to log.
-
-### 2. LOW: Yelp keys in `Authorization: Bearer …` headers
-
-`supabase/functions/get-restaurants/yelpKeys.ts:143` and `discover-new-restaurants/index.ts:94`. Headers are never logged, response body errors are sliced to 200 chars and don't echo the request header. Safe today.
-
-**Hardening**: keep an explicit rule never to log `req`/`fetch` objects whole — only specific fields. Already followed.
-
-### 3. LOW: Service-role key usage
-
-`get-restaurants/index.ts:70-71` puts `SUPABASE_SERVICE_ROLE_KEY` into request headers to PostgREST. Never logged. The error path at line 79 logs only `dbRes.status` and `errText` (response body, not request headers). Safe.
-
-### 4. NOISE, not a leak: key *names* (not values) appear in logs
-
-Lines like `[YelpKeyPool] marking YELP_API_KEY_2 EXHAUSTED…` log the env var **name**, not its value. Same for `key=${detailRes.keyName}` at `get-restaurants/index.ts:119`. This is fine — names are not secrets — but worth noting so we don't accidentally "fix" it by swapping in `key.value`.
-
-### 5. Database
-
-- `api_key_status` stores `key_name` (e.g. `"YELP_API_KEY_2"`), `last_status`, `last_error`. No key values written. Safe.
-- `restaurant_sightings`, `scan_log`, `atmosphere_cache`: business data only.
-- All four tables have public SELECT RLS, so we must continue to never write secrets into them. Currently true.
-
-### 6. Disk
-
-Edge functions are stateless; nothing is written to disk. Client writes only `useLocalStorage` keys (city selections, theme) and a `useDeviceId` UUID — no secrets.
-
-### 7. Client (`src/`)
-
-Only `VITE_SUPABASE_PUBLISHABLE_KEY` and `VITE_SUPABASE_URL` are referenced — both are publishable by design. No service role, Yelp, Gemini, or Google Places keys touch the client.
-
----
-
-## Proposed changes (single file)
-
-**Edit `supabase/functions/discover-new-restaurants/index.ts` around line 225**, switching the Gemini call from query-string auth to header auth:
-
-```ts
-res = await fetch(GEMINI_URL, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-goog-api-key": GEMINI_API_KEY,
-  },
-  body: JSON.stringify(body),
-});
+```text
+keep sighting iff:
+  (no price filter  OR  metrics.price_level IN <selected>)
+  AND
+  (min_rating == 0  OR  metrics.rating >= min_rating)
+  AND
+  metrics row exists when either filter is active   ← strict
 ```
-
-That's the only code change. Optional follow-ups (ask before doing):
-- Add a tiny `redact()` helper that masks anything matching `/AIza[0-9A-Za-z_-]{20,}/` and Yelp-shaped tokens before any `console.error` in catch blocks. Defense in depth.
-- Add a one-line note at the top of each edge function: "Never log full request/response objects; log status + slice(0,200) of body only."
-
-### Out of scope / not changing
-- Yelp `Authorization: Bearer` usage (already safe; header, not URL).
-- Existing key-name logging (names ≠ secrets).
-- Database schema (no secrets stored).
-
-### Verification after change
-1. Re-run a small discover batch (e.g. Detroit only).
-2. `supabase--edge_function_logs discover-new-restaurants` and grep for `AIza` / `key=` — should be zero hits.
-3. Confirm Gemini still returns 200 with the header form.
-
-Approve and I'll make the edit and verify with a single Detroit batch.
