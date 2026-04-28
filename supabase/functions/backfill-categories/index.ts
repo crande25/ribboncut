@@ -159,48 +159,74 @@ Deno.serve(async (req) => {
       } catch (_) { /* no body, ok */ }
     }
     days = Math.max(1, Math.min(days, 365));
-    limit = Math.max(1, Math.min(limit, 2000));
+    limit = Math.max(1, Math.min(limit, 5000));
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
 
-    // Pull recent sightings
-    const { data: sightings, error: sErr } = await supabase
-      .from("restaurant_sightings")
-      .select("yelp_id, city, first_seen_at")
-      .gte("first_seen_at", since)
-      .order("first_seen_at", { ascending: false })
-      .limit(limit);
-
-    if (sErr) {
-      console.error("sightings query error", sErr);
-      return new Response(JSON.stringify({ error: sErr.message }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // Pull recent sightings (paginate past PostgREST 1000-row default)
+    const sightings: { yelp_id: string; city: string; first_seen_at: string }[] = [];
+    const PAGE = 1000;
+    for (let from = 0; from < limit; from += PAGE) {
+      const to = Math.min(from + PAGE, limit) - 1;
+      const { data: page, error: sErr } = await supabase
+        .from("restaurant_sightings")
+        .select("yelp_id, city, first_seen_at")
+        .gte("first_seen_at", since)
+        .order("first_seen_at", { ascending: false })
+        .range(from, to);
+      if (sErr) {
+        console.error("sightings query error", sErr);
+        return new Response(JSON.stringify({ error: sErr.message }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (!page || page.length === 0) break;
+      sightings.push(...page);
+      if (page.length < to - from + 1) break;
     }
 
-    if (!sightings || sightings.length === 0) {
-      return new Response(JSON.stringify({ scanned: 0, missing: 0, updated: 0, days, limit }), {
+    if (sightings.length === 0) {
+      return new Response(JSON.stringify({ scanned: 0, refreshable: 0, updated: 0, days, limit }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    // Always refresh every sighting (values like price/rating/review_count drift over time).
+    // Order STALEST FIRST so a partial run (quota exhaustion) prioritizes the most outdated rows.
     const ids = sightings.map((s) => s.yelp_id);
-    const [{ data: existingCats }, { data: existingMetrics }] = await Promise.all([
-      supabase.from("restaurant_categories").select("yelp_id").in("yelp_id", ids),
-      supabase.from("restaurant_metrics").select("yelp_id").in("yelp_id", ids),
+    const staleness = new Map<string, number>(); // yelp_id -> min(updated_at ms) across cache tables, or 0 if uncached
+    for (const id of ids) staleness.set(id, 0);
+    const [{ data: catRows }, { data: metRows }] = await Promise.all([
+      supabase.from("restaurant_categories").select("yelp_id, updated_at").in("yelp_id", ids),
+      supabase.from("restaurant_metrics").select("yelp_id, updated_at").in("yelp_id", ids),
     ]);
-    const haveCats = new Set((existingCats || []).map((r: any) => r.yelp_id));
-    const haveMetrics = new Set((existingMetrics || []).map((r: any) => r.yelp_id));
-    // Missing = sighting lacks EITHER cache row
-    const missing = sightings.filter((s) => !haveCats.has(s.yelp_id) || !haveMetrics.has(s.yelp_id));
+    const catMap = new Map<string, number>();
+    for (const r of catRows || []) catMap.set(r.yelp_id, new Date(r.updated_at).getTime());
+    const metMap = new Map<string, number>();
+    for (const r of metRows || []) metMap.set(r.yelp_id, new Date(r.updated_at).getTime());
+    for (const id of ids) {
+      const c = catMap.get(id);
+      const m = metMap.get(id);
+      // Uncached (missing either) → staleness 0 (highest priority).
+      // Otherwise use the older of the two cache timestamps.
+      if (c === undefined || m === undefined) staleness.set(id, 0);
+      else staleness.set(id, Math.min(c, m));
+    }
+    const refreshTargets = [...sightings].sort(
+      (a, b) => (staleness.get(a.yelp_id) ?? 0) - (staleness.get(b.yelp_id) ?? 0),
+    );
 
-    console.log(`[backfill] scanned=${sightings.length} missing=${missing.length} (cats_missing=${sightings.length - haveCats.size}, metrics_missing=${sightings.length - haveMetrics.size}) days=${days} dry=${dryRun}`);
+    const uncachedCount = refreshTargets.filter((s) => staleness.get(s.yelp_id) === 0).length;
+    console.log(`[backfill] scanned=${sightings.length} refreshing=${refreshTargets.length} (uncached=${uncachedCount}, recached=${refreshTargets.length - uncachedCount}) days=${days} dry=${dryRun}`);
 
     if (dryRun) {
       return new Response(JSON.stringify({
-        scanned: sightings.length, missing: missing.length, updated: 0, metrics_updated: 0,
-        sample: missing.slice(0, 10).map((m) => ({ yelp_id: m.yelp_id, city: m.city })),
+        scanned: sightings.length, refreshable: refreshTargets.length, updated: 0, metrics_updated: 0,
+        sample: refreshTargets.slice(0, 10).map((m) => ({
+          yelp_id: m.yelp_id, city: m.city,
+          cache_age_ms: staleness.get(m.yelp_id) ? Date.now() - (staleness.get(m.yelp_id) as number) : null,
+        })),
         days, limit, dry_run: true,
       }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -213,7 +239,7 @@ Deno.serve(async (req) => {
     let yelpErrors = 0;
     let exhausted = false;
 
-    for (const m of missing) {
+    for (const m of refreshTargets) {
       const detailRes = await pool.fetch(`${YELP_API_URL}/businesses/${m.yelp_id}`);
       if (!detailRes.ok) {
         if (detailRes.exhaustedAllKeys) {
@@ -227,50 +253,46 @@ Deno.serve(async (req) => {
       }
       const biz = detailRes.body;
 
-      // Categories
-      if (!haveCats.has(m.yelp_id)) {
-        const aliases = (biz.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean);
-        const titles = (biz.categories || []).map((c: any) => String(c.title || "")).filter(Boolean);
-        const { error: upErr } = await supabase
-          .from("restaurant_categories")
-          .upsert(
-            { yelp_id: m.yelp_id, aliases, titles, updated_at: new Date().toISOString() },
-            { onConflict: "yelp_id" },
-          );
-        if (upErr) {
-          console.error(`[backfill] categories upsert failed ${m.yelp_id}: ${upErr.message}`);
-        } else {
-          updated++;
-          console.log(`[backfill] cached categories ${m.yelp_id} (${m.city}) aliases=[${aliases.join(",")}]`);
-        }
+      // Categories — always refresh
+      const aliases = (biz.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean);
+      const titles = (biz.categories || []).map((c: any) => String(c.title || "")).filter(Boolean);
+      const { error: upErr } = await supabase
+        .from("restaurant_categories")
+        .upsert(
+          { yelp_id: m.yelp_id, aliases, titles, updated_at: new Date().toISOString() },
+          { onConflict: "yelp_id" },
+        );
+      if (upErr) {
+        console.error(`[backfill] categories upsert failed ${m.yelp_id}: ${upErr.message}`);
+      } else {
+        updated++;
       }
 
-      // Metrics
-      if (!haveMetrics.has(m.yelp_id)) {
-        const priceLevel = typeof biz.price === "string" && biz.price.length > 0 ? biz.price.length : null;
-        const { error: metErr } = await supabase
-          .from("restaurant_metrics")
-          .upsert(
-            {
-              yelp_id: m.yelp_id,
-              price_level: priceLevel,
-              rating: typeof biz.rating === "number" ? biz.rating : null,
-              review_count: typeof biz.review_count === "number" ? biz.review_count : null,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "yelp_id" },
-          );
-        if (metErr) {
-          console.error(`[backfill] metrics upsert failed ${m.yelp_id}: ${metErr.message}`);
-        } else {
-          metricsUpdated++;
-          console.log(`[backfill] cached metrics ${m.yelp_id} (${m.city}) price=${priceLevel} rating=${biz.rating} reviews=${biz.review_count}`);
-        }
+      // Metrics — always refresh
+      const priceLevel = typeof biz.price === "string" && biz.price.length > 0 ? biz.price.length : null;
+      const { error: metErr } = await supabase
+        .from("restaurant_metrics")
+        .upsert(
+          {
+            yelp_id: m.yelp_id,
+            price_level: priceLevel,
+            rating: typeof biz.rating === "number" ? biz.rating : null,
+            review_count: typeof biz.review_count === "number" ? biz.review_count : null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "yelp_id" },
+        );
+      if (metErr) {
+        console.error(`[backfill] metrics upsert failed ${m.yelp_id}: ${metErr.message}`);
+      } else {
+        metricsUpdated++;
       }
+
+      console.log(`[backfill] refreshed ${m.yelp_id} (${m.city}) price=${priceLevel} rating=${biz.rating} reviews=${biz.review_count} aliases=[${aliases.join(",")}]`);
     }
 
     return new Response(JSON.stringify({
-      scanned: sightings.length, missing: missing.length, updated, metrics_updated: metricsUpdated,
+      scanned: sightings.length, refreshable: refreshTargets.length, updated, metrics_updated: metricsUpdated,
       yelp_errors: yelpErrors, exhausted, days, limit,
     }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
