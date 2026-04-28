@@ -222,9 +222,12 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
   let lastErrText = "";
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     geminiStart = Date.now();
-    res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
+    res = await fetch(GEMINI_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_API_KEY,
+      },
       body: JSON.stringify(body),
     });
 
