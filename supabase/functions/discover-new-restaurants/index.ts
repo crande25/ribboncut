@@ -497,8 +497,8 @@ Deno.serve(async (req) => {
       }
       summary.push(cityResult);
 
-      // Throttle 600ms between cities
-      await new Promise((r) => setTimeout(r, 600));
+      // Throttle 7s between cities to stay under Gemini grounded free tier (~10 RPM)
+      await new Promise((r) => setTimeout(r, 7000));
     }
 
     const elapsedMs = Date.now() - startedAt;
