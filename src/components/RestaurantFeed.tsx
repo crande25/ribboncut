@@ -61,11 +61,13 @@ export function RestaurantFeed() {
       offset,
       PAGE_SIZE,
       openedSince,
-      dietaryFilters.length > 0 ? dietaryFilters : undefined
+      dietaryFilters.length > 0 ? dietaryFilters : undefined,
+      priceFilters.length > 0 ? priceFilters : undefined,
+      minRating > 0 ? minRating : undefined,
     );
     const mapped = response.restaurants.map(mapToRestaurant);
     return { results: mapped, total: response.total, hasMore: offset + mapped.length < response.total };
-  }, [selectedCities, dietaryFilters, openedSince]);
+  }, [selectedCities, dietaryFilters, priceFilters, minRating, openedSince]);
 
   const fetchInitial = useCallback(async () => {
     setLoading(true);
