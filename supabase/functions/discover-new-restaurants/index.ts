@@ -446,7 +446,7 @@ Deno.serve(async (req) => {
 
       const cityResult = { city, candidates: 0, verified: 0, inserted: 0, skipped: 0 } as typeof summary[number];
       try {
-        const { candidates } = await callLovableAI(city, todayStr, sevenDaysAgoStr);
+        const { candidates } = await callGeminiGrounded(city, todayStr, sevenDaysAgoStr);
         cityResult.candidates = candidates.length;
         console.log(`[${city}] AI returned ${candidates.length} candidates`);
 
