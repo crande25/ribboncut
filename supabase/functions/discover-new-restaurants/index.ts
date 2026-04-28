@@ -216,6 +216,7 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
 
   if (debug) console.log(`[${label}] DEBUG request body:`, JSON.stringify(body));
 
+  const geminiStart = Date.now();
   const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -224,6 +225,8 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
 
   if (!res.ok) {
     const text = await res.text();
+    const errMs = Date.now() - geminiStart;
+    console.log(`[gemini ${label}] FAILED status=${res.status} after ${errMs}ms`);
     if (debug) console.log(`[${label}] DEBUG error response [${res.status}]:`, text);
     if (res.status === 429) {
       throw new Error(`Gemini 429: ${text.slice(0, 1500)}`);
@@ -235,6 +238,8 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
   }
 
   const data = await res.json();
+  const geminiMs = Date.now() - geminiStart;
+  console.log(`[gemini ${label}] roundtrip=${geminiMs}ms model=${GEMINI_MODEL}`);
   if (debug) console.log(`[${label}] DEBUG raw Gemini response:`, JSON.stringify(data));
 
   const gm = data?.candidates?.[0]?.groundingMetadata;
