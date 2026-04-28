@@ -249,8 +249,17 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
     text = parts.map((p: any) => (typeof p?.text === "string" ? p.text : "")).join("").trim();
   }
 
+  // Always log a concise Gemini response summary so harvest logs show what came back
+  console.log(`[gemini ${label}] response: textLen=${text.length} groundingQueries=${grounding?.webSearchQueries?.length ?? 0} sources=${grounding?.sources?.length ?? 0}`);
+  if (grounding?.webSearchQueries?.length) {
+    console.log(`[gemini ${label}] search queries: ${JSON.stringify(grounding.webSearchQueries)}`);
+  }
+  // Truncate raw text to keep logs readable but useful
+  const textPreview = text.length > 1500 ? text.slice(0, 1500) + `…(+${text.length - 1500} chars)` : text;
+  console.log(`[gemini ${label}] raw text: ${textPreview}`);
+
   if (!text) {
-    console.warn(`[${label}] no text in Gemini response`);
+    console.warn(`[gemini ${label}] no text in Gemini response`);
     return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 
@@ -269,11 +278,14 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
 
   try {
     const parsed = JSON.parse(jsonText);
-    if (debug) console.log(`[${label}] DEBUG parsed candidates:`, JSON.stringify(parsed));
     const list = Array.isArray(parsed) ? parsed : [];
+    console.log(`[gemini ${label}] parsed ${list.length} raw items from JSON`);
     const candidates: Candidate[] = [];
     for (const r of list) {
-      if (!r || typeof r.name !== "string" || typeof r.address !== "string") continue;
+      if (!r || typeof r.name !== "string" || typeof r.address !== "string") {
+        console.warn(`[gemini ${label}] dropping item — missing name/address: ${JSON.stringify(r)}`);
+        continue;
+      }
       const rawCity = typeof r.city === "string" ? r.city.trim() : "";
       let resolvedCity: string | undefined;
       if (citySet.has(rawCity)) {
@@ -283,15 +295,15 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
         resolvedCity = normCityMap.get(norm);
       }
       if (!resolvedCity) {
-        console.warn(`[${label}] dropping candidate "${r.name}" — city "${rawCity}" not in batch`);
+        console.warn(`[gemini ${label}] dropping "${r.name}" — city "${rawCity}" not in batch`);
         continue;
       }
       candidates.push({ name: r.name.trim(), address: r.address.trim(), city: resolvedCity });
     }
+    console.log(`[gemini ${label}] kept ${candidates.length}/${list.length} candidates: ${JSON.stringify(candidates.map((c) => `${c.name} @ ${c.city}`))}`);
     return { candidates, raw: debug ? data : undefined, grounding };
   } catch (e) {
-    console.warn(`[${label}] failed to parse Gemini text as JSON:`, e);
-    if (debug) console.log(`[${label}] DEBUG raw text:`, text);
+    console.warn(`[gemini ${label}] failed to parse Gemini text as JSON: ${e instanceof Error ? e.message : String(e)}`);
     return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 }
