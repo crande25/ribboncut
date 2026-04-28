@@ -209,6 +209,7 @@ Deno.serve(async (req) => {
     await pool.load();
 
     let updated = 0;
+    let metricsUpdated = 0;
     let yelpErrors = 0;
     let exhausted = false;
 
@@ -225,25 +226,51 @@ Deno.serve(async (req) => {
         continue;
       }
       const biz = detailRes.body;
-      const aliases = (biz.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean);
-      const titles = (biz.categories || []).map((c: any) => String(c.title || "")).filter(Boolean);
 
-      const { error: upErr } = await supabase
-        .from("restaurant_categories")
-        .upsert(
-          { yelp_id: m.yelp_id, aliases, titles, updated_at: new Date().toISOString() },
-          { onConflict: "yelp_id" },
-        );
-      if (upErr) {
-        console.error(`[backfill] upsert failed ${m.yelp_id}: ${upErr.message}`);
-        continue;
+      // Categories
+      if (!haveCats.has(m.yelp_id)) {
+        const aliases = (biz.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean);
+        const titles = (biz.categories || []).map((c: any) => String(c.title || "")).filter(Boolean);
+        const { error: upErr } = await supabase
+          .from("restaurant_categories")
+          .upsert(
+            { yelp_id: m.yelp_id, aliases, titles, updated_at: new Date().toISOString() },
+            { onConflict: "yelp_id" },
+          );
+        if (upErr) {
+          console.error(`[backfill] categories upsert failed ${m.yelp_id}: ${upErr.message}`);
+        } else {
+          updated++;
+          console.log(`[backfill] cached categories ${m.yelp_id} (${m.city}) aliases=[${aliases.join(",")}]`);
+        }
       }
-      updated++;
-      console.log(`[backfill] cached ${m.yelp_id} (${m.city}) aliases=[${aliases.join(",")}]`);
+
+      // Metrics
+      if (!haveMetrics.has(m.yelp_id)) {
+        const priceLevel = typeof biz.price === "string" && biz.price.length > 0 ? biz.price.length : null;
+        const { error: metErr } = await supabase
+          .from("restaurant_metrics")
+          .upsert(
+            {
+              yelp_id: m.yelp_id,
+              price_level: priceLevel,
+              rating: typeof biz.rating === "number" ? biz.rating : null,
+              review_count: typeof biz.review_count === "number" ? biz.review_count : null,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "yelp_id" },
+          );
+        if (metErr) {
+          console.error(`[backfill] metrics upsert failed ${m.yelp_id}: ${metErr.message}`);
+        } else {
+          metricsUpdated++;
+          console.log(`[backfill] cached metrics ${m.yelp_id} (${m.city}) price=${priceLevel} rating=${biz.rating} reviews=${biz.review_count}`);
+        }
+      }
     }
 
     return new Response(JSON.stringify({
-      scanned: sightings.length, missing: missing.length, updated,
+      scanned: sightings.length, missing: missing.length, updated, metrics_updated: metricsUpdated,
       yelp_errors: yelpErrors, exhausted, days, limit,
     }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
