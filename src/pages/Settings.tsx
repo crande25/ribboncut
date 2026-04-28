@@ -85,41 +85,6 @@ export default function Settings() {
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
-          <Leaf className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Dietary Requirements</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Filter results to match your dietary needs.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {dietaryOptions.map((opt) => {
-            const isSelected = dietaryFilters.includes(opt.value);
-            return (
-              <button
-                key={opt.value}
-                onClick={() =>
-                  setDietaryFilters((prev) =>
-                    isSelected
-                      ? prev.filter((v) => v !== opt.value)
-                      : [...prev, opt.value]
-                  )
-                }
-                className={cn(
-                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                  isSelected
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                )}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
           <DollarSign className="h-4 w-4 text-primary" />
           <h2 className="text-sm font-semibold text-foreground">Price Range</h2>
         </div>
@@ -174,6 +139,41 @@ export default function Settings() {
                   setRatingThresholds(next);
                   setMinRating(next.length > 0 ? Math.min(...next) : 0);
                 }}
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  isSelected
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Leaf className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Dietary Requirements</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Filter results to match your dietary needs.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {dietaryOptions.map((opt) => {
+            const isSelected = dietaryFilters.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                onClick={() =>
+                  setDietaryFilters((prev) =>
+                    isSelected
+                      ? prev.filter((v) => v !== opt.value)
+                      : [...prev, opt.value]
+                  )
+                }
                 className={cn(
                   "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
                   isSelected
