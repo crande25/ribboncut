@@ -134,7 +134,8 @@ const SE_MICHIGAN_CITIES = [
   "Shelby Township, MI", "Waterford, MI",
 ];
 
-const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const YELP_SEARCH_URL = "https://api.yelp.com/v3/businesses/search";
 
 interface Candidate {
