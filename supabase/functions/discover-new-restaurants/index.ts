@@ -216,28 +216,42 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
 
   if (debug) console.log(`[${label}] DEBUG request body:`, JSON.stringify(body));
 
-  const geminiStart = Date.now();
-  const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const MAX_ATTEMPTS = 3;
+  let res: Response | undefined;
+  let geminiStart = Date.now();
+  let lastErrText = "";
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    geminiStart = Date.now();
+    res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
-    const text = await res.text();
+    if (res.ok) break;
+
+    lastErrText = await res.text();
     const errMs = Date.now() - geminiStart;
-    console.log(`[gemini ${label}] FAILED status=${res.status} after ${errMs}ms`);
-    if (debug) console.log(`[${label}] DEBUG error response [${res.status}]:`, text);
-    if (res.status === 429) {
-      throw new Error(`Gemini 429: ${text.slice(0, 1500)}`);
+    const retriable = res.status >= 500 && res.status < 600;
+    console.log(`[gemini ${label}] attempt ${attempt}/${MAX_ATTEMPTS} FAILED status=${res.status} after ${errMs}ms${retriable && attempt < MAX_ATTEMPTS ? " — retrying" : ""}`);
+    if (debug) console.log(`[${label}] DEBUG error response [${res.status}]:`, lastErrText);
+
+    if (!retriable || attempt === MAX_ATTEMPTS) {
+      if (res.status === 429) {
+        throw new Error(`Gemini 429: ${lastErrText.slice(0, 1500)}`);
+      }
+      if (res.status === 403 && lastErrText.includes("API_KEY_INVALID")) {
+        throw new Error(`Gemini API key invalid — rotate GEMINI_API_KEY: ${lastErrText.slice(0, 200)}`);
+      }
+      throw new Error(`Gemini call failed [${res.status}] after ${attempt} attempt(s): ${lastErrText.slice(0, 300)}`);
     }
-    if (res.status === 403 && text.includes("API_KEY_INVALID")) {
-      throw new Error(`Gemini API key invalid — rotate GEMINI_API_KEY: ${text.slice(0, 200)}`);
-    }
-    throw new Error(`Gemini call failed [${res.status}]: ${text.slice(0, 300)}`);
+
+    // Exponential backoff: 2s, 5s
+    const backoffMs = attempt === 1 ? 2000 : 5000;
+    await new Promise((r) => setTimeout(r, backoffMs));
   }
 
-  const data = await res.json();
+  const data = await res!.json();
   const geminiMs = Date.now() - geminiStart;
   console.log(`[gemini ${label}] roundtrip=${geminiMs}ms model=${GEMINI_MODEL}`);
   if (debug) console.log(`[${label}] DEBUG raw Gemini response:`, JSON.stringify(data));
