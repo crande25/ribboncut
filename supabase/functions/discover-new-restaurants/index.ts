@@ -362,10 +362,12 @@ Deno.serve(async (req) => {
     // Accepts ?cities=Detroit,%20MI|Ann%20Arbor,%20MI  OR  JSON body { cities: [...], days?: 7 }
     let citiesToScan: string[] = [...SE_MICHIGAN_CITIES];
     let lookbackDays = 7;
+    let debug = false;
     try {
       const url = new URL(req.url);
       const citiesParam = url.searchParams.get("cities");
       const daysParam = url.searchParams.get("days");
+      const debugParam = url.searchParams.get("debug");
       if (citiesParam) {
         citiesToScan = citiesParam.split("|").map((c) => c.trim()).filter(Boolean);
       }
@@ -373,6 +375,7 @@ Deno.serve(async (req) => {
         const n = parseInt(daysParam, 10);
         if (!Number.isNaN(n) && n > 0 && n <= 90) lookbackDays = n;
       }
+      if (debugParam === "1" || debugParam === "true") debug = true;
       if (req.method === "POST") {
         const body = await req.json().catch(() => ({}));
         if (Array.isArray(body?.cities) && body.cities.length > 0) {
@@ -381,6 +384,7 @@ Deno.serve(async (req) => {
         if (typeof body?.days === "number" && body.days > 0 && body.days <= 90) {
           lookbackDays = body.days;
         }
+        if (body?.debug === true) debug = true;
       }
     } catch (_e) { /* ignore parse errors, use defaults */ }
 
