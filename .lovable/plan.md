@@ -1,84 +1,108 @@
 ## Goal
-Daily at 3am EST, run a per-city AI web search for restaurants opened in the last 7 days, verify each candidate via Yelp, and insert verified hits into `restaurant_sightings`. Console logs only — no UI.
 
-## Architecture
+Replace the ungrounded Lovable AI call with a direct call to Google's Gemini API using the `google_search` tool, so the harvest actually finds recently opened restaurants. Keep the same downstream pipeline (Yelp verify → upsert into `restaurant_sightings`).
 
-```text
-pg_cron (0 8 * * * UTC ≈ 3am EST)
-  └─> POST /functions/v1/discover-new-restaurants
-       │
-       ├─ Compute date window: today, today - 7 days ("Month D, YYYY")
-       │
-       ├─ For EACH city in SE_MICHIGAN_CITIES (one call per city, 600ms throttle):
-       │    └─> Perplexity Sonar API
-       │         model: "sonar"
-       │         search_recency_filter: "week"
-       │         response_format: json_schema → { restaurants: [{ name, address }] }
-       │         prompt: "Search for and list all restaurants that officially
-       │                  opened for business in {City} between {7daysAgo}
-       │                  and {today}. For each result, provide only the
-       │                  restaurant name and address. Do not include opening
-       │                  dates, source links, cuisine type, or any additional
-       │                  commentary or descriptions. Focus only on permanent
-       │                  locations that are currently fully operational."
-       │
-       ├─ For each candidate { name, address }:
-       │    └─> Yelp /businesses/search?term={name}&location={address}, limit=3
-       │         match: candidate name fuzzy-matches Yelp result name
-       │                AND Yelp result city == target city
-       │         on match → INSERT INTO restaurant_sightings
-       │           (yelp_id, city, first_seen_at = now(), is_new_discovery = true)
-       │           ON CONFLICT (yelp_id) DO NOTHING
-       │
-       └─ console.log({ summary: [...per-city counters], totals })
-```
+## Why direct Gemini, not Lovable AI
 
-## Step 1 — Connect Perplexity
-Use `standard_connectors--connect` with `connector_id: perplexity`. After connection, `PERPLEXITY_API_KEY` is auto-injected into edge function env.
+The Lovable AI gateway does not expose Google Search grounding. Direct Gemini API does — within Google's free tier (1,500 grounded requests/day on `gemini-2.5-flash`). Our usage is ~29/day.
 
-## Step 2 — Edge function
+## Step 1 — Add `GEMINI_API_KEY` secret
+
+Free key from https://aistudio.google.com → "Get API Key" → "Create API key". No billing setup required for the free tier.
+
+I'll request it via the secret tool. Edge function won't deploy a working harvest until it's set.
+
+## Step 2 — Rewrite `callLovableAI` → `callGeminiGrounded`
+
 File: `supabase/functions/discover-new-restaurants/index.ts`
 
-- Single file (no subfolders)
-- Public function (`verify_jwt = false`); pg_cron passes service-role key in header
-- Inline copy of the SE Michigan cities list (edge functions can't import from `src/`)
-- Inline Yelp key rotation (3 keys: `YELP_API_KEY`, `YELP_API_KEY_2`, `YELP_API_KEY_3`)
-- Per-city flow: build prompt → Perplexity call → for each candidate, Yelp verify → insert
-- Final `console.log` summary visible in edge function logs
+Endpoint: `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`
 
-## Step 3 — Schedule cron
-Enable `pg_cron` and `pg_net` extensions, then insert (via insert tool, not migration — contains project-specific URL/key):
+Request body:
 
-```sql
-SELECT cron.schedule(
-  'discover-new-restaurants-daily',
-  '0 8 * * *',
-  $$ SELECT net.http_post(
-       url := 'https://dcvgzkhoxlvtynlnxsdw.supabase.co/functions/v1/discover-new-restaurants',
-       headers := '{"Content-Type":"application/json","Authorization":"Bearer <SERVICE_ROLE_KEY>"}'::jsonb,
-       body := '{}'::jsonb
-     ); $$
-);
+```json
+{
+  "contents": [{
+    "role": "user",
+    "parts": [{ "text": "<existing prompt with city + date window>" }]
+  }],
+  "tools": [{ "google_search": {} }],
+  "generationConfig": { "temperature": 0.2 }
+}
 ```
 
-## Step 4 — Frontend
-**No changes.** New rows surface in the feed via existing `first_seen_at desc` ordering in `get-restaurants`.
+Note: with `google_search` enabled, Gemini does **not** allow `responseSchema` or function-calling tools in the same request. So we ask for a plain-text answer in a strict format and parse it.
 
-## What we're NOT building
-- No admin UI, no manual trigger button
-- No source URL or opening date storage (per prompt spec — name + address only)
-- No new tables; reuse `restaurant_sightings` with `is_new_discovery = true`
-- No schema changes
-- No retries within a single run (next day's run is the retry)
+Prompt update — append:
+
+```text
+Return ONLY a JSON array, no prose, no markdown fencing. Each item:
+{"name": "...", "address": "..."}
+If none found, return [].
+```
+
+Parser: strip optional ```json fences, `JSON.parse`, validate each item has string `name`/`address`. Existing fuzzy filter still drops obviously bad rows.
+
+## Step 3 — Surface grounding metadata in debug mode
+
+Existing `debug` flag already returns the raw response. With Gemini direct, the response shape becomes:
+
+```text
+candidates[0].content.parts[].text         ← the JSON we parse
+candidates[0].groundingMetadata
+  ├── webSearchQueries: ["new restaurants opened Detroit MI ..."]
+  ├── groundingChunks: [{ web: { uri, title } }, ...]
+  └── groundingSupports: [...]
+```
+
+Debug response surfaces `webSearchQueries` and the list of `groundingChunks` URIs alongside `raw_ai_response`. That's the receipt that grounding actually fired.
+
+## Step 4 — Error handling
+
+- **429** → "Gemini rate limited (free tier 15 RPM / 1,500 req/day)". Throw, city is logged as failed, harvest continues to next city.
+- **403** with `API_KEY_INVALID` → throw with clear message; user needs to rotate the secret.
+- **Empty `candidates`** or no `parts[].text` → log and return `[]` (same as current behavior).
+- **JSON parse failure** → log raw text in debug mode, return `[]`.
+
+## Step 5 — Cron behavior
+
+Cron job continues to call the same endpoint with no body. Default model becomes Gemini grounded — no opt-in flag, no fallback. (We discussed opt-in earlier; flipping to "always grounded" is the right call because the ungrounded path returns 0 candidates and is therefore useless.)
+
+The Lovable AI gateway code path is **removed**, not kept as a fallback. Reasons:
+- Maintaining two providers doubles the surface area for bugs.
+- The ungrounded path is proven empty.
+- If Gemini quota ever exhausts, the failure mode (logged 429s, 0 inserts that day) is the same as cron simply not running.
+
+## Step 6 — Verification after deploy
+
+1. Debug call for Detroit, 30-day window:
+   ```
+   POST /discover-new-restaurants
+   body: {"cities":["Detroit, MI"],"days":30,"debug":true}
+   ```
+   Expect: non-empty `candidates`, `grounding.webSearchQueries` populated, `grounding.groundingChunks` URIs pointing to real news pages from the last 30 days.
+
+2. If candidates look real, run a full harvest with `{}`. Expect non-zero inserts across multiple cities.
 
 ## Files touched
-- **Created**: `supabase/functions/discover-new-restaurants/index.ts`
-- **Connector**: Perplexity linked
-- **DB**: `pg_cron` + `pg_net` enabled; one cron job inserted
+
+- **Edited**: `supabase/functions/discover-new-restaurants/index.ts`
+  - Replace `callLovableAI` body + parser
+  - Update debug response to include grounding metadata
+  - Update error messages
+- **Secret added**: `GEMINI_API_KEY`
+- **No** changes to: cron schedule, frontend, DB schema, RLS, auth guard, Yelp pool
+
+## What we're NOT doing
+
+- Not keeping the Lovable AI fallback
+- Not switching models (stays on `gemini-2.5-flash` — free tier covers it)
+- Not adding a UI toggle for grounded vs ungrounded
+- Not storing grounding citation URLs in the DB (debug-only for now; can add later if you want an audit trail)
 
 ## Tradeoffs
-1. **No source URL stored** — per the prompt, Perplexity returns name+address only. No audit trail. Can add later if desired.
-2. **`first_seen_at = now()`** — prompt excludes opening dates, so we use insertion time. Feed ordering still correct.
-3. **Strict Yelp verification** drops anything Yelp doesn't index yet; future runs will catch them when Yelp updates.
-4. **Conservative match heuristic** (substring + city) — generic names could in theory match wrong Yelp business. Acceptable.
-5. **Cost**: ~29 Perplexity calls/day ≈ $0.03/day. Negligible.
+
+1. **New external dependency**: a Google account / key that lives outside Lovable Cloud. If the user revokes it or the project is forked, the new owner needs their own key.
+2. **No structured-output guarantee**: `google_search` precludes JSON schema enforcement, so we rely on prompt + parser. Mitigation: the prompt is explicit and the parser is forgiving (strips fences, validates per-item).
+3. **Free tier ceiling**: 1,500 grounded req/day. We use ~29. Plenty of room, but if you ever expand to hundreds of cities or hourly runs, you'd hit the limit.
+4. **Cost path forward**: if you outgrow the free tier, $35 per 1,000 grounded requests on Google's pay-as-you-go. ~$1/day at current scale would be the worst case.
