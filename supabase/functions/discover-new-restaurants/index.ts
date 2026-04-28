@@ -632,6 +632,24 @@ Deno.serve(async (req) => {
           } else {
             console.log(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — duplicate (already in restaurant_sightings)`);
           }
+
+          // Cache categories (upsert; refreshes on each verified sighting)
+          const { error: catErr } = await supabase
+            .from("restaurant_categories")
+            .upsert(
+              {
+                yelp_id: hit.yelp_id,
+                aliases: hit.categoryAliases,
+                titles: hit.categoryTitles,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "yelp_id" },
+            );
+          if (catErr) {
+            console.error(`[cache ${cand.city}] categories upsert failed yelp_id=${hit.yelp_id}: ${catErr.message}`);
+          } else {
+            console.log(`[cache ${cand.city}] categories cached yelp_id=${hit.yelp_id} aliases=[${hit.categoryAliases.join(",")}]`);
+          }
         }
 
         // Log per-city scan rows for every city in the batch
