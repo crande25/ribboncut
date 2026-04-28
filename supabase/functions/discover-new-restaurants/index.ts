@@ -174,99 +174,103 @@ function cityMatch(targetCity: string, yelpCity: string | undefined): boolean {
   return yelpNorm === targetMain || yelpNorm.includes(targetMain) || targetMain.includes(yelpNorm);
 }
 
-async function callLovableAI(
+interface GroundingInfo {
+  webSearchQueries?: string[];
+  sources?: Array<{ uri?: string; title?: string }>;
+}
+
+async function callGeminiGrounded(
   city: string,
   today: string,
   sevenDaysAgo: string,
   debug = false,
-): Promise<{ candidates: Candidate[]; raw?: any }> {
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+): Promise<{ candidates: Candidate[]; raw?: any; grounding?: GroundingInfo }> {
+  const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
 
-  const prompt = `Search for and list all restaurants that officially opened for business in ${city} between ${sevenDaysAgo} and ${today}. For each result, provide only the restaurant name and address. Do not include opening dates, source links, cuisine type, or any additional commentary or descriptions. Focus only on permanent locations that are currently fully operational.`;
+  const prompt = `Search the web for restaurants that officially opened for business in ${city} between ${sevenDaysAgo} and ${today}. Only include permanent locations that are currently fully operational. Exclude pop-ups, food trucks without a permanent address, planned/announced openings, and locations that have already closed.
+
+Return ONLY a JSON array, with no prose, no explanation, and no markdown code fencing. Each item must have exactly this shape:
+{"name": "Restaurant name", "address": "Street address, City, State"}
+
+If you find no qualifying restaurants, return exactly: []`;
 
   const body = {
-    model: "google/gemini-2.5-flash",
-    messages: [
-      { role: "system", content: "You are a precise local-news researcher. Return only verified, permanent, currently operating restaurants. If none are found, return an empty list." },
-      { role: "user", content: prompt },
-    ],
-    tools: [
-      {
-        type: "function",
-        function: {
-          name: "report_new_restaurants",
-          description: "Report newly opened restaurants found in the search.",
-          parameters: {
-            type: "object",
-            properties: {
-              restaurants: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    name: { type: "string", description: "Restaurant name only" },
-                    address: { type: "string", description: "Street address with city/state" },
-                  },
-                  required: ["name", "address"],
-                  additionalProperties: false,
-                },
-              },
-            },
-            required: ["restaurants"],
-            additionalProperties: false,
-          },
-        },
-      },
-    ],
-    tool_choice: { type: "function", function: { name: "report_new_restaurants" } },
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: { temperature: 0.2 },
   };
 
-  if (debug) {
-    console.log(`[${city}] DEBUG request body:`, JSON.stringify(body));
-  }
+  if (debug) console.log(`[${city}] DEBUG request body:`, JSON.stringify(body));
 
-  const res = await fetch(LOVABLE_AI_URL, {
+  const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const text = await res.text();
     if (debug) console.log(`[${city}] DEBUG error response [${res.status}]:`, text);
-    if (res.status === 429) throw new Error(`AI rate limited: ${text.slice(0, 200)}`);
-    if (res.status === 402) throw new Error(`AI credits exhausted: ${text.slice(0, 200)}`);
-    throw new Error(`AI call failed [${res.status}]: ${text.slice(0, 300)}`);
+    if (res.status === 429) {
+      throw new Error(`Gemini rate limited (free tier 15 RPM / 1500 req/day): ${text.slice(0, 200)}`);
+    }
+    if (res.status === 403 && text.includes("API_KEY_INVALID")) {
+      throw new Error(`Gemini API key invalid — rotate GEMINI_API_KEY: ${text.slice(0, 200)}`);
+    }
+    throw new Error(`Gemini call failed [${res.status}]: ${text.slice(0, 300)}`);
   }
 
   const data = await res.json();
-  if (debug) {
-    console.log(`[${city}] DEBUG raw AI response:`, JSON.stringify(data));
+  if (debug) console.log(`[${city}] DEBUG raw Gemini response:`, JSON.stringify(data));
+
+  // Extract grounding metadata for debug surfacing
+  const gm = data?.candidates?.[0]?.groundingMetadata;
+  const grounding: GroundingInfo | undefined = gm
+    ? {
+        webSearchQueries: gm.webSearchQueries,
+        sources: (gm.groundingChunks || [])
+          .map((c: any) => c?.web)
+          .filter((w: any) => w?.uri)
+          .map((w: any) => ({ uri: w.uri, title: w.title })),
+      }
+    : undefined;
+
+  // Concat all text parts (model sometimes splits)
+  const parts = data?.candidates?.[0]?.content?.parts;
+  let text = "";
+  if (Array.isArray(parts)) {
+    text = parts.map((p: any) => (typeof p?.text === "string" ? p.text : "")).join("").trim();
   }
 
-  const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
-  if (!toolCall?.function?.arguments) {
-    console.warn(`[${city}] no tool_call in AI response`);
-    if (debug) console.log(`[${city}] DEBUG message content:`, JSON.stringify(data?.choices?.[0]?.message));
-    return { candidates: [], raw: debug ? data : undefined };
+  if (!text) {
+    console.warn(`[${city}] no text in Gemini response`);
+    return { candidates: [], raw: debug ? data : undefined, grounding };
+  }
+
+  // Strip optional ```json ... ``` fencing
+  let jsonText = text;
+  const fenceMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch) jsonText = fenceMatch[1].trim();
+
+  // If model added prose, try to find the first JSON array in the text
+  if (!jsonText.startsWith("[")) {
+    const arrMatch = jsonText.match(/\[[\s\S]*\]/);
+    if (arrMatch) jsonText = arrMatch[0];
   }
 
   try {
-    const parsed = JSON.parse(toolCall.function.arguments);
-    if (debug) console.log(`[${city}] DEBUG parsed tool args:`, JSON.stringify(parsed));
-    const list = Array.isArray(parsed?.restaurants) ? parsed.restaurants : [];
+    const parsed = JSON.parse(jsonText);
+    if (debug) console.log(`[${city}] DEBUG parsed candidates:`, JSON.stringify(parsed));
+    const list = Array.isArray(parsed) ? parsed : [];
     const candidates = list
       .filter((r: any) => r && typeof r.name === "string" && typeof r.address === "string")
       .map((r: any) => ({ name: r.name.trim(), address: r.address.trim() }));
-    return { candidates, raw: debug ? data : undefined };
+    return { candidates, raw: debug ? data : undefined, grounding };
   } catch (e) {
-    console.warn(`[${city}] failed to parse tool args:`, e);
-    if (debug) console.log(`[${city}] DEBUG raw tool args:`, toolCall.function.arguments);
-    return { candidates: [], raw: debug ? data : undefined };
+    console.warn(`[${city}] failed to parse Gemini text as JSON:`, e);
+    if (debug) console.log(`[${city}] DEBUG raw text:`, text);
+    return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 }
 
