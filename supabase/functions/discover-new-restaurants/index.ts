@@ -565,13 +565,17 @@ Deno.serve(async (req) => {
           if (!cityResult) continue;
           cityResult.candidates++;
 
-          const hit = await verifyOnYelp(pool, cand, cand.city);
-          if (!hit) {
+          console.log(`[yelp ${cand.city}] LOOKUP term="${cand.name}" location="${cand.address}"`);
+          const verify = await verifyOnYelp(pool, cand, cand.city);
+          console.log(`[yelp ${cand.city}] RESULT term="${cand.name}" yelpResults=${verify.yelpResultCount} reason=${verify.reason}${verify.hit ? ` matched=${verify.hit.yelp_id}/"${verify.hit.yelp_name}"` : ""}`);
+
+          if (!verify.hit) {
             cityResult.skipped++;
-            console.log(`[${cand.city}] SKIP "${cand.name}" — no Yelp match`);
+            console.log(`[db ${cand.city}] SKIP "${cand.name}" — ${verify.reason}`);
             continue;
           }
           cityResult.verified++;
+          const hit = verify.hit;
 
           const { error: insertErr, data: inserted } = await supabase
             .from("restaurant_sightings")
@@ -587,15 +591,15 @@ Deno.serve(async (req) => {
             .select();
 
           if (insertErr) {
-            console.error(`[${cand.city}] insert failed for ${hit.yelp_id}:`, insertErr.message);
+            console.error(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — db-error: ${insertErr.message}`);
             continue;
           }
           if (inserted && inserted.length > 0) {
             cityResult.inserted++;
             totalInserted++;
-            console.log(`[${cand.city}] INSERTED ${hit.yelp_id} "${hit.yelp_name}"`);
+            console.log(`[db ${cand.city}] INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}"`);
           } else {
-            console.log(`[${cand.city}] DUPLICATE ${hit.yelp_id} "${hit.yelp_name}" — already tracked`);
+            console.log(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — duplicate (already in restaurant_sightings)`);
           }
         }
 
