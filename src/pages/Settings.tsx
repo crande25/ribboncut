@@ -36,7 +36,6 @@ const priceOptions = [
 ];
 
 const ratingOptions = [
-  { value: 0, label: "Any" },
   { value: 3.5, label: "3.5★+" },
   { value: 4.0, label: "4.0★+" },
   { value: 4.5, label: "4.5★+" },
@@ -52,7 +51,8 @@ export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
   const [priceFilters, setPriceFilters] = useLocalStorage<number[]>("price_filters", []);
-  const [minRating, setMinRating] = useLocalStorage<number>("min_rating", 0);
+  const [ratingThresholds, setRatingThresholds] = useLocalStorage<number[]>("rating_thresholds", []);
+  const [, setMinRating] = useLocalStorage<number>("min_rating", 0);
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
@@ -159,23 +159,32 @@ export default function Settings() {
           <h2 className="text-sm font-semibold text-foreground">Minimum Rating</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          Only show spots at or above this Yelp rating.
+          Pick one or more thresholds. We'll use the lowest as your minimum.
         </p>
         <div className="flex flex-wrap gap-2">
-          {ratingOptions.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setMinRating(opt.value)}
-              className={cn(
-                "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                minRating === opt.value
-                  ? "bg-primary text-primary-foreground shadow-md"
-                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
+          {ratingOptions.map((opt) => {
+            const isSelected = ratingThresholds.includes(opt.value);
+            return (
+              <button
+                key={opt.value}
+                onClick={() => {
+                  const next = isSelected
+                    ? ratingThresholds.filter((v) => v !== opt.value)
+                    : [...ratingThresholds, opt.value];
+                  setRatingThresholds(next);
+                  setMinRating(next.length > 0 ? Math.min(...next) : 0);
+                }}
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  isSelected
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
       </section>
 
