@@ -315,11 +315,18 @@ interface VerifiedHit {
   candidate: Candidate;
 }
 
+interface VerifyResult {
+  hit: VerifiedHit | null;
+  reason: string;
+  yelpResultCount: number;
+  yelpUrl: string;
+}
+
 async function verifyOnYelp(
   pool: YelpKeyPool,
   candidate: Candidate,
   targetCity: string,
-): Promise<VerifiedHit | null> {
+): Promise<VerifyResult> {
   const params = new URLSearchParams({
     term: candidate.name,
     location: candidate.address,
@@ -330,24 +337,53 @@ async function verifyOnYelp(
 
   const res = await pool.fetch(url);
   if (!res.ok) {
-    console.warn(`[verify] Yelp search failed for "${candidate.name}": status=${res.status}`);
-    return null;
+    return {
+      hit: null,
+      reason: `yelp-error status=${res.status}${res.exhaustedAllKeys ? " (all keys exhausted)" : ""}`,
+      yelpResultCount: 0,
+      yelpUrl: url,
+    };
   }
 
   const businesses: any[] = res.body?.businesses || [];
+  if (businesses.length === 0) {
+    return { hit: null, reason: "no-yelp-results", yelpResultCount: 0, yelpUrl: url };
+  }
+
+  const rejections: string[] = [];
   for (const b of businesses) {
-    if (!b?.id || !b?.name) continue;
+    if (!b?.id || !b?.name) {
+      rejections.push("missing-id-or-name");
+      continue;
+    }
     const yelpCity: string | undefined = b?.location?.city;
-    if (!namesMatch(candidate.name, b.name)) continue;
-    if (!cityMatch(targetCity, yelpCity)) continue;
+    if (!namesMatch(candidate.name, b.name)) {
+      rejections.push(`name-mismatch("${b.name}")`);
+      continue;
+    }
+    if (!cityMatch(targetCity, yelpCity)) {
+      rejections.push(`city-mismatch("${b.name}" → ${yelpCity ?? "?"})`);
+      continue;
+    }
     return {
-      yelp_id: b.id,
-      yelp_name: b.name,
-      yelp_city: yelpCity || targetCity,
-      candidate,
+      hit: {
+        yelp_id: b.id,
+        yelp_name: b.name,
+        yelp_city: yelpCity || targetCity,
+        candidate,
+      },
+      reason: "match",
+      yelpResultCount: businesses.length,
+      yelpUrl: url,
     };
   }
-  return null;
+
+  return {
+    hit: null,
+    reason: `no-strict-match [${rejections.join("; ")}]`,
+    yelpResultCount: businesses.length,
+    yelpUrl: url,
+  };
 }
 
 Deno.serve(async (req) => {
