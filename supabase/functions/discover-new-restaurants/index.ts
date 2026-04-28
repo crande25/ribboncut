@@ -392,7 +392,7 @@ Deno.serve(async (req) => {
     // Cron uses ?chunk=N&chunk_size=8 to slice the master city list (stays under
     // edge-function 150s ceiling and Gemini's ~10 RPM grounded free tier).
     let citiesToScan: string[] = [...SE_MICHIGAN_CITIES];
-    let lookbackDays = 30;
+    let lookbackDays = 7;
     let debug = false;
     let chunk: number | null = null;
     let chunkSize = 30;
