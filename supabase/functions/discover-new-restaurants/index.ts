@@ -173,7 +173,12 @@ function cityMatch(targetCity: string, yelpCity: string | undefined): boolean {
   return yelpNorm === targetMain || yelpNorm.includes(targetMain) || targetMain.includes(yelpNorm);
 }
 
-async function callLovableAI(city: string, today: string, sevenDaysAgo: string): Promise<Candidate[]> {
+async function callLovableAI(
+  city: string,
+  today: string,
+  sevenDaysAgo: string,
+  debug = false,
+): Promise<{ candidates: Candidate[]; raw?: any }> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
@@ -216,6 +221,10 @@ async function callLovableAI(city: string, today: string, sevenDaysAgo: string):
     tool_choice: { type: "function", function: { name: "report_new_restaurants" } },
   };
 
+  if (debug) {
+    console.log(`[${city}] DEBUG request body:`, JSON.stringify(body));
+  }
+
   const res = await fetch(LOVABLE_AI_URL, {
     method: "POST",
     headers: {
@@ -227,27 +236,36 @@ async function callLovableAI(city: string, today: string, sevenDaysAgo: string):
 
   if (!res.ok) {
     const text = await res.text();
+    if (debug) console.log(`[${city}] DEBUG error response [${res.status}]:`, text);
     if (res.status === 429) throw new Error(`AI rate limited: ${text.slice(0, 200)}`);
     if (res.status === 402) throw new Error(`AI credits exhausted: ${text.slice(0, 200)}`);
     throw new Error(`AI call failed [${res.status}]: ${text.slice(0, 300)}`);
   }
 
   const data = await res.json();
+  if (debug) {
+    console.log(`[${city}] DEBUG raw AI response:`, JSON.stringify(data));
+  }
+
   const toolCall = data?.choices?.[0]?.message?.tool_calls?.[0];
   if (!toolCall?.function?.arguments) {
     console.warn(`[${city}] no tool_call in AI response`);
-    return [];
+    if (debug) console.log(`[${city}] DEBUG message content:`, JSON.stringify(data?.choices?.[0]?.message));
+    return { candidates: [], raw: debug ? data : undefined };
   }
 
   try {
     const parsed = JSON.parse(toolCall.function.arguments);
+    if (debug) console.log(`[${city}] DEBUG parsed tool args:`, JSON.stringify(parsed));
     const list = Array.isArray(parsed?.restaurants) ? parsed.restaurants : [];
-    return list
+    const candidates = list
       .filter((r: any) => r && typeof r.name === "string" && typeof r.address === "string")
       .map((r: any) => ({ name: r.name.trim(), address: r.address.trim() }));
+    return { candidates, raw: debug ? data : undefined };
   } catch (e) {
     console.warn(`[${city}] failed to parse tool args:`, e);
-    return [];
+    if (debug) console.log(`[${city}] DEBUG raw tool args:`, toolCall.function.arguments);
+    return { candidates: [], raw: debug ? data : undefined };
   }
 }
 
@@ -344,10 +362,12 @@ Deno.serve(async (req) => {
     // Accepts ?cities=Detroit,%20MI|Ann%20Arbor,%20MI  OR  JSON body { cities: [...], days?: 7 }
     let citiesToScan: string[] = [...SE_MICHIGAN_CITIES];
     let lookbackDays = 7;
+    let debug = false;
     try {
       const url = new URL(req.url);
       const citiesParam = url.searchParams.get("cities");
       const daysParam = url.searchParams.get("days");
+      const debugParam = url.searchParams.get("debug");
       if (citiesParam) {
         citiesToScan = citiesParam.split("|").map((c) => c.trim()).filter(Boolean);
       }
@@ -355,6 +375,7 @@ Deno.serve(async (req) => {
         const n = parseInt(daysParam, 10);
         if (!Number.isNaN(n) && n > 0 && n <= 90) lookbackDays = n;
       }
+      if (debugParam === "1" || debugParam === "true") debug = true;
       if (req.method === "POST") {
         const body = await req.json().catch(() => ({}));
         if (Array.isArray(body?.cities) && body.cities.length > 0) {
@@ -363,6 +384,7 @@ Deno.serve(async (req) => {
         if (typeof body?.days === "number" && body.days > 0 && body.days <= 90) {
           lookbackDays = body.days;
         }
+        if (body?.debug === true) debug = true;
       }
     } catch (_e) { /* ignore parse errors, use defaults */ }
 
@@ -382,7 +404,26 @@ Deno.serve(async (req) => {
     const todayStr = formatDate(today);
     const sevenDaysAgoStr = formatDate(sevenDaysAgo);
 
-    console.log(`[discover] starting scan: ${sevenDaysAgoStr} → ${todayStr} (${lookbackDays}d), ${citiesToScan.length} cities`);
+    console.log(`[discover] starting scan: ${sevenDaysAgoStr} → ${todayStr} (${lookbackDays}d), ${citiesToScan.length} cities${debug ? " [DEBUG MODE]" : ""}`);
+
+    // Debug mode: hit only the first city, return raw AI response, skip Yelp/insert.
+    if (debug) {
+      const city = citiesToScan[0];
+      console.log(`[discover] DEBUG mode — single city only: ${city}`);
+      const { candidates, raw } = await callLovableAI(city, todayStr, sevenDaysAgoStr, true);
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          debug: true,
+          city,
+          window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
+          candidate_count: candidates.length,
+          candidates,
+          raw_ai_response: raw,
+        }, null, 2),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const summary: Array<{
       city: string;
@@ -399,7 +440,7 @@ Deno.serve(async (req) => {
 
       const cityResult = { city, candidates: 0, verified: 0, inserted: 0, skipped: 0 } as typeof summary[number];
       try {
-        const candidates = await callLovableAI(city, todayStr, sevenDaysAgoStr);
+        const { candidates } = await callLovableAI(city, todayStr, sevenDaysAgoStr);
         cityResult.candidates = candidates.length;
         console.log(`[${city}] AI returned ${candidates.length} candidates`);
 
