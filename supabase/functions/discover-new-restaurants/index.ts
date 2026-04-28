@@ -249,8 +249,17 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
     text = parts.map((p: any) => (typeof p?.text === "string" ? p.text : "")).join("").trim();
   }
 
+  // Always log a concise Gemini response summary so harvest logs show what came back
+  console.log(`[gemini ${label}] response: textLen=${text.length} groundingQueries=${grounding?.webSearchQueries?.length ?? 0} sources=${grounding?.sources?.length ?? 0}`);
+  if (grounding?.webSearchQueries?.length) {
+    console.log(`[gemini ${label}] search queries: ${JSON.stringify(grounding.webSearchQueries)}`);
+  }
+  // Truncate raw text to keep logs readable but useful
+  const textPreview = text.length > 1500 ? text.slice(0, 1500) + `…(+${text.length - 1500} chars)` : text;
+  console.log(`[gemini ${label}] raw text: ${textPreview}`);
+
   if (!text) {
-    console.warn(`[${label}] no text in Gemini response`);
+    console.warn(`[gemini ${label}] no text in Gemini response`);
     return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 
@@ -269,11 +278,14 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
 
   try {
     const parsed = JSON.parse(jsonText);
-    if (debug) console.log(`[${label}] DEBUG parsed candidates:`, JSON.stringify(parsed));
     const list = Array.isArray(parsed) ? parsed : [];
+    console.log(`[gemini ${label}] parsed ${list.length} raw items from JSON`);
     const candidates: Candidate[] = [];
     for (const r of list) {
-      if (!r || typeof r.name !== "string" || typeof r.address !== "string") continue;
+      if (!r || typeof r.name !== "string" || typeof r.address !== "string") {
+        console.warn(`[gemini ${label}] dropping item — missing name/address: ${JSON.stringify(r)}`);
+        continue;
+      }
       const rawCity = typeof r.city === "string" ? r.city.trim() : "";
       let resolvedCity: string | undefined;
       if (citySet.has(rawCity)) {
@@ -283,15 +295,15 @@ If you find no qualifying restaurants in any of these cities, return exactly: []
         resolvedCity = normCityMap.get(norm);
       }
       if (!resolvedCity) {
-        console.warn(`[${label}] dropping candidate "${r.name}" — city "${rawCity}" not in batch`);
+        console.warn(`[gemini ${label}] dropping "${r.name}" — city "${rawCity}" not in batch`);
         continue;
       }
       candidates.push({ name: r.name.trim(), address: r.address.trim(), city: resolvedCity });
     }
+    console.log(`[gemini ${label}] kept ${candidates.length}/${list.length} candidates: ${JSON.stringify(candidates.map((c) => `${c.name} @ ${c.city}`))}`);
     return { candidates, raw: debug ? data : undefined, grounding };
   } catch (e) {
-    console.warn(`[${label}] failed to parse Gemini text as JSON:`, e);
-    if (debug) console.log(`[${label}] DEBUG raw text:`, text);
+    console.warn(`[gemini ${label}] failed to parse Gemini text as JSON: ${e instanceof Error ? e.message : String(e)}`);
     return { candidates: [], raw: debug ? data : undefined, grounding };
   }
 }
@@ -303,11 +315,18 @@ interface VerifiedHit {
   candidate: Candidate;
 }
 
+interface VerifyResult {
+  hit: VerifiedHit | null;
+  reason: string;
+  yelpResultCount: number;
+  yelpUrl: string;
+}
+
 async function verifyOnYelp(
   pool: YelpKeyPool,
   candidate: Candidate,
   targetCity: string,
-): Promise<VerifiedHit | null> {
+): Promise<VerifyResult> {
   const params = new URLSearchParams({
     term: candidate.name,
     location: candidate.address,
@@ -318,24 +337,53 @@ async function verifyOnYelp(
 
   const res = await pool.fetch(url);
   if (!res.ok) {
-    console.warn(`[verify] Yelp search failed for "${candidate.name}": status=${res.status}`);
-    return null;
+    return {
+      hit: null,
+      reason: `yelp-error status=${res.status}${res.exhaustedAllKeys ? " (all keys exhausted)" : ""}`,
+      yelpResultCount: 0,
+      yelpUrl: url,
+    };
   }
 
   const businesses: any[] = res.body?.businesses || [];
+  if (businesses.length === 0) {
+    return { hit: null, reason: "no-yelp-results", yelpResultCount: 0, yelpUrl: url };
+  }
+
+  const rejections: string[] = [];
   for (const b of businesses) {
-    if (!b?.id || !b?.name) continue;
+    if (!b?.id || !b?.name) {
+      rejections.push("missing-id-or-name");
+      continue;
+    }
     const yelpCity: string | undefined = b?.location?.city;
-    if (!namesMatch(candidate.name, b.name)) continue;
-    if (!cityMatch(targetCity, yelpCity)) continue;
+    if (!namesMatch(candidate.name, b.name)) {
+      rejections.push(`name-mismatch("${b.name}")`);
+      continue;
+    }
+    if (!cityMatch(targetCity, yelpCity)) {
+      rejections.push(`city-mismatch("${b.name}" → ${yelpCity ?? "?"})`);
+      continue;
+    }
     return {
-      yelp_id: b.id,
-      yelp_name: b.name,
-      yelp_city: yelpCity || targetCity,
-      candidate,
+      hit: {
+        yelp_id: b.id,
+        yelp_name: b.name,
+        yelp_city: yelpCity || targetCity,
+        candidate,
+      },
+      reason: "match",
+      yelpResultCount: businesses.length,
+      yelpUrl: url,
     };
   }
-  return null;
+
+  return {
+    hit: null,
+    reason: `no-strict-match [${rejections.join("; ")}]`,
+    yelpResultCount: businesses.length,
+    yelpUrl: url,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -517,13 +565,17 @@ Deno.serve(async (req) => {
           if (!cityResult) continue;
           cityResult.candidates++;
 
-          const hit = await verifyOnYelp(pool, cand, cand.city);
-          if (!hit) {
+          console.log(`[yelp ${cand.city}] LOOKUP term="${cand.name}" location="${cand.address}"`);
+          const verify = await verifyOnYelp(pool, cand, cand.city);
+          console.log(`[yelp ${cand.city}] RESULT term="${cand.name}" yelpResults=${verify.yelpResultCount} reason=${verify.reason}${verify.hit ? ` matched=${verify.hit.yelp_id}/"${verify.hit.yelp_name}"` : ""}`);
+
+          if (!verify.hit) {
             cityResult.skipped++;
-            console.log(`[${cand.city}] SKIP "${cand.name}" — no Yelp match`);
+            console.log(`[db ${cand.city}] SKIP "${cand.name}" — ${verify.reason}`);
             continue;
           }
           cityResult.verified++;
+          const hit = verify.hit;
 
           const { error: insertErr, data: inserted } = await supabase
             .from("restaurant_sightings")
@@ -539,15 +591,15 @@ Deno.serve(async (req) => {
             .select();
 
           if (insertErr) {
-            console.error(`[${cand.city}] insert failed for ${hit.yelp_id}:`, insertErr.message);
+            console.error(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — db-error: ${insertErr.message}`);
             continue;
           }
           if (inserted && inserted.length > 0) {
             cityResult.inserted++;
             totalInserted++;
-            console.log(`[${cand.city}] INSERTED ${hit.yelp_id} "${hit.yelp_name}"`);
+            console.log(`[db ${cand.city}] INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}"`);
           } else {
-            console.log(`[${cand.city}] DUPLICATE ${hit.yelp_id} "${hit.yelp_name}" — already tracked`);
+            console.log(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — duplicate (already in restaurant_sightings)`);
           }
         }
 
