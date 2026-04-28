@@ -463,18 +463,22 @@ Deno.serve(async (req) => {
 
     console.log(`[discover] starting scan: ${sevenDaysAgoStr} → ${todayStr} (${lookbackDays}d), ${citiesToScan.length} cities${debug ? " [DEBUG MODE]" : ""}`);
 
-    // Debug mode: hit only the first city, return raw AI response, skip Yelp/insert.
+    // Debug mode: hit the first batch only, return raw AI response, skip Yelp/insert.
     if (debug) {
-      const city = citiesToScan[0];
-      console.log(`[discover] DEBUG mode — single city only: ${city}`);
-      const { candidates, raw, grounding } = await callGeminiGrounded(city, todayStr, sevenDaysAgoStr, true);
+      const batch = citiesToScan.slice(0, BATCH_SIZE);
+      console.log(`[discover] DEBUG mode — single batch only: ${batch.join(" | ")}`);
+      const { candidates, raw, grounding } = await callGeminiGrounded(batch, todayStr, sevenDaysAgoStr, true);
+      const perCity: Record<string, number> = {};
+      for (const c of batch) perCity[c] = 0;
+      for (const cand of candidates) perCity[cand.city] = (perCity[cand.city] || 0) + 1;
       return new Response(
         JSON.stringify({
           ok: true,
           debug: true,
-          city,
+          cities: batch,
           window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
           candidate_count: candidates.length,
+          per_city_counts: perCity,
           candidates,
           grounding,
           raw_ai_response: raw,
@@ -494,19 +498,31 @@ Deno.serve(async (req) => {
 
     let totalInserted = 0;
 
-    for (const city of citiesToScan) {
+    // Process cities in batches — one Gemini grounded call per batch (cuts daily
+    // grounded-call usage to fit free-tier 20/day cap).
+    for (let i = 0; i < citiesToScan.length; i += BATCH_SIZE) {
+      const batch = citiesToScan.slice(i, i + BATCH_SIZE);
+      const batchLabel = batch.join(" | ");
 
-      const cityResult = { city, candidates: 0, verified: 0, inserted: 0, skipped: 0 } as typeof summary[number];
+      // Initialize per-city result rows so cities with zero candidates still appear.
+      const batchResults = new Map<string, typeof summary[number]>();
+      for (const c of batch) {
+        batchResults.set(c, { city: c, candidates: 0, verified: 0, inserted: 0, skipped: 0 });
+      }
+
       try {
-        const { candidates } = await callGeminiGrounded(city, todayStr, sevenDaysAgoStr);
-        cityResult.candidates = candidates.length;
-        console.log(`[${city}] AI returned ${candidates.length} candidates`);
+        const { candidates } = await callGeminiGrounded(batch, todayStr, sevenDaysAgoStr);
+        console.log(`[batch ${batchLabel}] AI returned ${candidates.length} candidates`);
 
         for (const cand of candidates) {
-          const hit = await verifyOnYelp(pool, cand, city);
+          const cityResult = batchResults.get(cand.city);
+          if (!cityResult) continue;
+          cityResult.candidates++;
+
+          const hit = await verifyOnYelp(pool, cand, cand.city);
           if (!hit) {
             cityResult.skipped++;
-            console.log(`[${city}] SKIP "${cand.name}" — no Yelp match`);
+            console.log(`[${cand.city}] SKIP "${cand.name}" — no Yelp match`);
             continue;
           }
           cityResult.verified++;
@@ -516,7 +532,7 @@ Deno.serve(async (req) => {
             .upsert(
               {
                 yelp_id: hit.yelp_id,
-                city,
+                city: cand.city,
                 first_seen_at: new Date().toISOString(),
                 is_new_discovery: true,
               },
@@ -525,33 +541,36 @@ Deno.serve(async (req) => {
             .select();
 
           if (insertErr) {
-            console.error(`[${city}] insert failed for ${hit.yelp_id}:`, insertErr.message);
+            console.error(`[${cand.city}] insert failed for ${hit.yelp_id}:`, insertErr.message);
             continue;
           }
           if (inserted && inserted.length > 0) {
             cityResult.inserted++;
             totalInserted++;
-            console.log(`[${city}] INSERTED ${hit.yelp_id} "${hit.yelp_name}"`);
+            console.log(`[${cand.city}] INSERTED ${hit.yelp_id} "${hit.yelp_name}"`);
           } else {
-            console.log(`[${city}] DUPLICATE ${hit.yelp_id} "${hit.yelp_name}" — already tracked`);
+            console.log(`[${cand.city}] DUPLICATE ${hit.yelp_id} "${hit.yelp_name}" — already tracked`);
           }
         }
 
-        // Log per-city scan
-        await supabase.from("scan_log").insert({
-          city,
-          new_count: cityResult.inserted,
-        });
+        // Log per-city scan rows for every city in the batch
+        for (const [city, r] of batchResults) {
+          await supabase.from("scan_log").insert({ city, new_count: r.inserted });
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        cityResult.error = msg;
-        console.error(`[${city}] city failed:`, msg);
+        console.error(`[batch ${batchLabel}] failed:`, msg);
+        for (const r of batchResults.values()) r.error = msg;
       }
-      summary.push(cityResult);
 
-      // Throttle 7s between cities to stay under Gemini grounded free tier (~10 RPM)
-      await new Promise((r) => setTimeout(r, 7000));
+      for (const r of batchResults.values()) summary.push(r);
+
+      // Throttle 7s between batches (well under Gemini's ~10 RPM grounded limit)
+      if (i + BATCH_SIZE < citiesToScan.length) {
+        await new Promise((r) => setTimeout(r, 7000));
+      }
     }
+
 
     const elapsedMs = Date.now() - startedAt;
     console.log("[discover] DONE", JSON.stringify({
