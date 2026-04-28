@@ -190,11 +190,16 @@ async function callGeminiGrounded(
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
   if (cities.length === 0) return { candidates: [] };
 
-  const cityBullets = cities.map((c) => `  - ${c}`).join("\n");
   const label = cities.join(" | ");
+  const cityNames = cities.map((c) => c.replace(/,\s*[A-Z]{2}$/, ""));
+  const cityPhrase =
+    cityNames.length === 1
+      ? cityNames[0]
+      : cityNames.length === 2
+        ? `${cityNames[0]} or ${cityNames[1]}`
+        : `${cityNames.slice(0, -1).join(", ")}, or ${cityNames[cityNames.length - 1]}`;
 
-  const prompt = `Search the web for restaurants that officially opened for business between ${sevenDaysAgo} and ${today} in any of these cities:
-${cityBullets}
+  const prompt = `Search for restaurants that are active in any capacity (including soft openings, permanent pop-up residencies, or preview phases) in ${cityPhrase} as of ${sevenDaysAgo} to ${today}. Do not restrict the list to 'officially' opened grand openings; include any business currently serving customers at a physical street address.
 
 Only include permanent locations that are currently fully operational. Exclude pop-ups, food trucks without a permanent address, planned/announced openings, and locations that have already closed.
 
