@@ -141,7 +141,10 @@ const YELP_SEARCH_URL = "https://api.yelp.com/v3/businesses/search";
 interface Candidate {
   name: string;
   address: string;
+  city: string;
 }
+
+const BATCH_SIZE = 3;
 
 function formatDate(d: Date): string {
   return d.toLocaleDateString("en-US", {
