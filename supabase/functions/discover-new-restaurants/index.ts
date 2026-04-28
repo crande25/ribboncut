@@ -340,6 +340,8 @@ interface VerifiedHit {
   yelp_name: string;
   yelp_city: string;
   candidate: Candidate;
+  categoryAliases: string[];
+  categoryTitles: string[];
 }
 
 interface VerifyResult {
@@ -398,6 +400,8 @@ async function verifyOnYelp(
         yelp_name: b.name,
         yelp_city: yelpCity || targetCity,
         candidate,
+        categoryAliases: (b.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean),
+        categoryTitles: (b.categories || []).map((c: any) => String(c.title || "")).filter(Boolean),
       },
       reason: "match",
       yelpResultCount: businesses.length,
@@ -627,6 +631,24 @@ Deno.serve(async (req) => {
             console.log(`[db ${cand.city}] INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}"`);
           } else {
             console.log(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — duplicate (already in restaurant_sightings)`);
+          }
+
+          // Cache categories (upsert; refreshes on each verified sighting)
+          const { error: catErr } = await supabase
+            .from("restaurant_categories")
+            .upsert(
+              {
+                yelp_id: hit.yelp_id,
+                aliases: hit.categoryAliases,
+                titles: hit.categoryTitles,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "yelp_id" },
+            );
+          if (catErr) {
+            console.error(`[cache ${cand.city}] categories upsert failed yelp_id=${hit.yelp_id}: ${catErr.message}`);
+          } else {
+            console.log(`[cache ${cand.city}] categories cached yelp_id=${hit.yelp_id} aliases=[${hit.categoryAliases.join(",")}]`);
           }
         }
 

@@ -65,6 +65,27 @@ export type Database = {
         }
         Relationships: []
       }
+      restaurant_categories: {
+        Row: {
+          aliases: string[]
+          titles: string[]
+          updated_at: string
+          yelp_id: string
+        }
+        Insert: {
+          aliases?: string[]
+          titles?: string[]
+          updated_at?: string
+          yelp_id: string
+        }
+        Update: {
+          aliases?: string[]
+          titles?: string[]
+          updated_at?: string
+          yelp_id?: string
+        }
+        Relationships: []
+      }
       restaurant_sightings: {
         Row: {
           city: string
