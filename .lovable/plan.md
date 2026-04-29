@@ -1,78 +1,82 @@
-## Goal
+# Vibe Generation from Reviews
 
-Surface the RibbonCut name in two specific places without adding permanent chrome to the Feed.
+Replace the current ungrounded vibe text with AI summaries written from real customer reviews (Google Places primary, Yelp fallback). Casual, friendly, neutral tone — describes look & feel only, no praise or critique.
 
----
+## Architecture
 
-## 1. Settings page header
-
-**File:** `src/pages/Settings.tsx` (line 90)
-
-Replace the current `<h1>Settings ⚙️</h1>` with a two-line header:
-- Top line: `<h1>RibbonCut</h1>` — large, bold, primary-colored wordmark (the brand).
-- Bottom line: small muted "Settings" subtitle so users still know where they are.
-
-The "Clear Filters" button stays in its current right-aligned position, vertically centered against the new stacked header.
-
-Approx markup:
-```tsx
-<div className="flex items-end justify-between gap-3">
-  <div className="space-y-0.5">
-    <h1 className="text-2xl font-bold tracking-tight text-primary">RibbonCut</h1>
-    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Settings</p>
-  </div>
-  {hasAnyFilter && (/* existing Clear Filters button */)}
-</div>
+```text
+                                      ┌──────────────────────┐
+                                      │  restaurant_metrics  │
+                                      │   yelp_id (PK)       │
+                                      │   google_place_id ★  │  ← new column
+                                      │   ... existing cols  │
+                                      └──────────┬───────────┘
+                                                 │
+   ┌─────────────────────┐    no place_id?   ┌───▼────────────┐  reviews   ┌──────────────┐
+   │  vibe missing for   │────────────────►  │ Google Places  │ ─────────► │  Lovable AI  │
+   │  this yelp_id?      │                   │   resolver     │            │  summarize   │
+   └─────────────────────┘                   └────────────────┘            └──────┬───────┘
+                                                                                  │
+                                                                                  ▼
+                                                                       atmosphere_cache
 ```
 
-No other Settings sections change.
+★ = new nullable column. Stores the resolved Google `place_id`, or sentinel `'NOT_FOUND'` so we don't keep retrying.
 
----
+## Components
 
-## 2. Feed loading & empty states — brand splash
+**1. Schema change** — add `google_place_id TEXT NULL` to `restaurant_metrics`. Cached forever once resolved.
 
-**File:** `src/components/RestaurantFeed.tsx`
+**2. New edge function: `generate-vibe`** (single-restaurant worker)
+   - Input: `{ yelp_id }`
+   - Reads cached metrics (name, address, coords, place_id)
+   - If no `google_place_id` → resolve via Google Places `searchText` and verify with fuzzy name + city + (if coords present) ≤150m distance check. Cache result or `'NOT_FOUND'`.
+   - Fetch reviews — Google Places `place/details` (up to 5 reviews); fall back to Yelp `/v3/businesses/{id}/reviews` (3 short snippets) if Google failed.
+   - Call Lovable AI (`google/gemini-3-flash-preview`) using tool-calling for structured output: `{ vibe: string }`.
+   - Upsert into `atmosphere_cache` (overwriting any prior value).
+   - Returns `{ ok, vibe?, source: "google" | "yelp" | "none" }`.
 
-Add a centered brand splash that appears in three scenarios:
-- Initial loading (`loading && selectedCities.length > 0`)
-- No locations selected (`selectedCities.length === 0 && !loading`)
-- Empty results (`selectedCities.length > 0 && restaurants.length === 0` after load)
+**3. Backfill (run once)** — admin-only edge function `backfill-vibes`. Iterates all `restaurant_sightings.yelp_id`, sequentially throttled, calls `generate-vibe` for each. Overwrites all 47 existing summaries with review-grounded ones. I'll trigger this once and report results.
 
-It replaces (loading) or sits above (empty states) the existing skeleton/empty UI. Once `restaurants.length > 0`, the splash is not rendered — restaurant cards take over. This keeps the Feed clean during normal use (no permanent header) while still name-dropping when the screen is otherwise empty.
+**4. Daily auto-fill (inline, after discovery)** — at the very end of `discover-new-restaurants`, run a "fill missing vibes" pass: query sightings whose `yelp_id` is missing from `atmosphere_cache`, call `generate-vibe` for each. Throttled; fault-tolerant (one failure doesn't stop the batch).
 
-### Splash component (inline, top of the feed body)
+**5. Inline blocking fallback in `get-restaurants`** — after batch-loading sightings + atmosphere cache, if any visible restaurant on the page lacks a vibe, call `generate-vibe` for those before returning. Bounded:
+   - Max 8 concurrent
+   - Per-call timeout ~6s
+   - Overall budget ~10s; anything still missing falls back to the cuisine string for that card so the Feed never hangs
 
-```tsx
-<div className="flex flex-col items-center gap-2 py-10 text-center animate-in fade-in duration-500">
-  <h1 className="text-4xl font-bold tracking-tight text-primary">RibbonCut</h1>
-  <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-    What just opened
-  </p>
-</div>
-```
+## Style prompt (sent to Lovable AI)
 
-### Integration
+> Write a 1–2 sentence vibe description (max ~160 characters) for this restaurant based on the customer reviews below. Casual, friendly tone. Describe the look and feel — decor, crowd, energy, lighting, layout, noise level. Do NOT praise or criticize the food, service, or value. Stay neutral and observational. Output via the `set_vibe` tool.
 
-- Remove the current small `<h1>What Just Opened 🍽️</h1>` heading from line 203 — it duplicates branding and creates the "permanent chrome" we want to avoid.
-- Keep the refresh button, but move it to a top-right floating position (absolute, top-right of the feed container) so it remains accessible without anchoring a header bar.
-- Render the splash above the loading skeletons, the "Select at least one location" card, and the "Nothing new yet!" card.
-- When `restaurants.length > 0`, only the cards render — no splash, no header. Pure content.
+Tool-calling schema enforces a single `vibe` string field.
 
-### Behavior summary
+## Failure handling
 
-| State | What user sees |
-|---|---|
-| First load (with cities) | RibbonCut splash + skeletons |
-| No cities selected | RibbonCut splash + "Select at least one location" prompt |
-| Loaded, empty results | RibbonCut splash + "Nothing new yet!" |
-| Loaded, has results | Just the restaurant cards (refresh button floats top-right) |
+- **Google Place not found** → mark `'NOT_FOUND'`, fall through to Yelp reviews
+- **Both review sources empty** → skip this run, leave atmosphere_cache empty (will retry tomorrow)
+- **Lovable AI 429 / 402** → log + skip (don't fail the batch)
+- **Yelp keys exhausted** → still attempt Google only
 
-The splash naturally fades in via Tailwind's `animate-in fade-in` utility. It is not separately animated out — it simply unmounts when results arrive, which is visually clean given the skeleton-to-card transition.
+## Files affected
 
----
+- `supabase/migrations/...` — add `google_place_id` column (migration tool)
+- `supabase/functions/generate-vibe/index.ts` — new
+- `supabase/functions/backfill-vibes/index.ts` — new (one-shot, admin-only)
+- `supabase/functions/discover-new-restaurants/index.ts` — append vibe-fill phase at end
+- `supabase/functions/get-restaurants/index.ts` — inline blocking fallback for missing vibes
 
-## Out of scope
+## Out of scope (not changing)
 
-- No logo image — text wordmark only (matches existing minimal aesthetic).
-- No changes to BottomNav, RestaurantCard, or any other component.
-- No new design tokens; uses existing `text-primary` and `text-muted-foreground`.
+- The `atmosphere_cache` table schema itself (still `yelp_id` + `atmosphere_summary` + `created_at`)
+- The Feed UI / `RestaurantCard` rendering
+- Yelp key pool / discovery filtering / hotel exclusion
+- Vibe regeneration / refresh — once written, a vibe stays cached indefinitely (we can add a refresh policy later if reviews drift)
+
+## Sequence of execution
+
+1. Migration: add column
+2. Build & deploy `generate-vibe`
+3. Build & deploy `backfill-vibes`, run it once, report results (47 restaurants)
+4. Wire vibe-fill phase into `discover-new-restaurants`, deploy
+5. Wire blocking fallback into `get-restaurants`, deploy
