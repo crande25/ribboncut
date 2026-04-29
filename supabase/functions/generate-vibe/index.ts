@@ -171,7 +171,46 @@ async function fetchGoogleReviews(placeId: string, apiKey: string): Promise<stri
     .slice(0, 5);
 }
 
-/** Fetch up to 3 review snippets from Yelp via the rotating key pool. */
+/** Fetch business metadata (name, address, coords, etc.) from Yelp via rotating keys. */
+async function fetchYelpBusiness(yelpId: string, supabase: any): Promise<any | null> {
+  const { data: statuses } = await supabase
+    .from("api_key_status")
+    .select("key_name, reset_at")
+    .eq("provider", "yelp");
+  const exhaustedSet = new Set<string>();
+  const now = new Date();
+  for (const s of statuses || []) {
+    if (s.reset_at && new Date(s.reset_at) > now) exhaustedSet.add(s.key_name);
+  }
+
+  const candidateKeys: string[] = [];
+  const primary = Deno.env.get("YELP_API_KEY");
+  if (primary && !exhaustedSet.has("YELP_API_KEY")) candidateKeys.push(primary);
+  for (let i = 2; i <= 20; i++) {
+    const name = `YELP_API_KEY_${i}`;
+    const v = Deno.env.get(name);
+    if (v && !exhaustedSet.has(name)) candidateKeys.push(v);
+  }
+
+  for (const key of candidateKeys) {
+    const res = await fetch(`${YELP_REVIEWS_URL}/${yelpId}`, {
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+    });
+    if (res.ok) return await res.json();
+    if (res.status === 404) {
+      console.warn(`[generate-vibe] Yelp business ${yelpId} not found (404)`);
+      return null;
+    }
+    if (res.status !== 429 && res.status !== 401 && res.status !== 403) {
+      const text = await res.text();
+      console.error(`[generate-vibe] Yelp business fetch failed ${res.status}: ${text.slice(0, 200)}`);
+      return null;
+    }
+    // quota / auth → try next key
+  }
+  return null;
+}
+
 async function fetchYelpReviews(yelpId: string, supabase: any): Promise<string[]> {
   // Try each key until we get a 200 or all keys are exhausted.
   const { data: statuses } = await supabase
