@@ -138,6 +138,7 @@ export type Database = {
         Row: {
           address: string | null
           coordinates: Json | null
+          google_place_id: string | null
           image_url: string | null
           name: string | null
           phone: string | null
@@ -151,6 +152,7 @@ export type Database = {
         Insert: {
           address?: string | null
           coordinates?: Json | null
+          google_place_id?: string | null
           image_url?: string | null
           name?: string | null
           phone?: string | null
@@ -164,6 +166,7 @@ export type Database = {
         Update: {
           address?: string | null
           coordinates?: Json | null
+          google_place_id?: string | null
           image_url?: string | null
           name?: string | null
           phone?: string | null
