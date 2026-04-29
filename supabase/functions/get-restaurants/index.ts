@@ -349,6 +349,22 @@ Deno.serve(async (req) => {
             } else {
               console.error(`Yelp detail error for ${sighting.yelp_id}: status=${detailRes.status} key=${detailRes.keyName} — using cache fallback`);
             }
+            // Tombstone permanently-unavailable businesses so we stop
+            // re-fetching them on every refresh. Yelp returns 403 with
+            // BUSINESS_UNAVAILABLE for de-listed / no-review entries.
+            const bodyStr = typeof detailRes.body === "string"
+              ? detailRes.body
+              : JSON.stringify(detailRes.body || {});
+            if (detailRes.status === 403 && bodyStr.includes("BUSINESS_UNAVAILABLE")) {
+              supabase
+                .from("restaurant_sightings")
+                .update({ yelp_unavailable_at: new Date().toISOString() })
+                .eq("yelp_id", sighting.yelp_id)
+                .then(({ error }: { error: any }) => {
+                  if (error) console.error(`[tombstone] failed for ${sighting.yelp_id}: ${error.message}`);
+                  else console.log(`[tombstone] marked ${sighting.yelp_id} unavailable`);
+                });
+            }
             return buildFromCache(sighting);
           }
 
