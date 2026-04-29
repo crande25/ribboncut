@@ -143,13 +143,33 @@ export class YelpKeyPool {
         headers: { Authorization: `Bearer ${key.value}`, Accept: "application/json" },
       });
 
-      // Auth / permission failure → key is dead for the day, rotate + persist
-      if (res.status === 401 || res.status === 403) {
+      // 401 = auth always means the key is bad. Rotate + persist.
+      if (res.status === 401) {
         const body = await res.text();
-        console.warn(`[YelpKeyPool] ${key.name} got ${res.status}: ${body.slice(0, 200)}`);
+        console.warn(`[YelpKeyPool] ${key.name} got 401: ${body.slice(0, 200)}`);
         await this.markExhausted(key.name, res.status, body);
         console.log(`[YelpKeyPool] rotating: will try next available key`);
         continue;
+      }
+
+      // 403 has TWO flavors:
+      //   Real key issues (TOKEN_INVALID/MISSING/REVOKED, VALIDATION_ERROR on auth) → key is dead
+      //   Per-business issues (BUSINESS_UNAVAILABLE, etc.) → key is fine, just this resource fails
+      // Only mark exhausted if the body indicates a key/auth-level problem.
+      if (res.status === 403) {
+        const body = await res.text();
+        const isKeyProblem = /TOKEN_INVALID|TOKEN_MISSING|TOKEN_REVOKED|UNAUTHORIZED|FORBIDDEN_CLIENT/i.test(body);
+        console.warn(`[YelpKeyPool] ${key.name} got 403 (${isKeyProblem ? "key-level" : "per-resource"}): ${body.slice(0, 200)}`);
+        if (isKeyProblem) {
+          await this.markExhausted(key.name, res.status, body);
+          console.log(`[YelpKeyPool] rotating: will try next available key`);
+          continue;
+        }
+        // Per-resource 403 — key is healthy, return error to caller
+        return {
+          ok: false, status: 403, body,
+          rateLimited: false, authError: false, keyName: key.name,
+        };
       }
 
       // 429 has TWO flavors:
