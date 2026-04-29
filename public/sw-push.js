@@ -41,3 +41,11 @@ self.addEventListener("notificationclick", (event) => {
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
+// Minimal pass-through fetch handler.
+// Required for Chrome to consider the site installable and fire `beforeinstallprompt`.
+// We intentionally do NOT cache anything — always go to network.
+self.addEventListener("fetch", (event) => {
+  // Let the browser handle the request normally.
+  return;
+});
