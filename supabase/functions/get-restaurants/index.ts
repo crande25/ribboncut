@@ -248,10 +248,18 @@ Deno.serve(async (req) => {
       };
     };
 
-    // Fetch live Yelp details for each (post-filter) sighting via the rotating key pool
+    // Fetch live Yelp details for each (post-filter) sighting via the rotating key pool,
+    // unless the cached metrics row is fresh (<72h) — then serve directly from cache.
+    let cacheHits = 0;
+    let yelpFetches = 0;
     const restaurants = await Promise.all(
       workingSightings.map(async (sighting: any) => {
+        if (isCacheFresh(sighting.yelp_id)) {
+          cacheHits++;
+          return buildFromCache(sighting);
+        }
         try {
+          yelpFetches++;
           const detailRes = await pool.fetch(`${YELP_API_URL}/businesses/${sighting.yelp_id}`);
 
           if (!detailRes.ok) {
