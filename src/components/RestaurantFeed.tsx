@@ -191,7 +191,7 @@ export function RestaurantFeed() {
   });
 
   return (
-    <div ref={containerRef} className="space-y-4 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch" }}>
+    <div ref={containerRef} className="relative space-y-4 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch" }}>
       <PullToRefreshIndicator
         pullDistance={pullDistance}
         refreshing={pullRefreshing}
