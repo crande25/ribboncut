@@ -231,7 +231,11 @@ export function RestaurantFeed() {
       {loading && selectedCities.length > 0 ? (
         <div className="space-y-4">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="rounded-lg border border-border bg-card p-4 space-y-3">
+            <div
+              key={i}
+              className="rounded-lg border border-border bg-card p-4 space-y-3 animate-card-strobe"
+              style={{ animationDelay: `${i * 300}ms` }}
+            >
               <Skeleton className="h-48 w-full rounded-md" />
               <Skeleton className="h-4 w-2/3" />
               <Skeleton className="h-3 w-1/3" />
