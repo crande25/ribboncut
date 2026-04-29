@@ -19,6 +19,14 @@ if (isPreviewHost || isInIframe) {
   navigator.serviceWorker?.getRegistrations().then((registrations) => {
     registrations.forEach((r) => r.unregister());
   });
+} else if ("serviceWorker" in navigator) {
+  // Production only: register the SW so Chrome treats the app as installable
+  // and fires `beforeinstallprompt`. The SW has a no-op fetch handler — no caching.
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw-push.js")
+      .catch((err) => console.warn("SW registration failed:", err));
+  });
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
