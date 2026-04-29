@@ -119,7 +119,16 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Cadence check
+      // Local-time-of-day gate: only deliver during the device's preferred hour.
+      // Cron runs hourly, so this naturally lands the push within that local hour.
+      const targetHour = sub.preferred_hour ?? 10;
+      const currentLocalHour = localHourIn(sub.timezone || "America/Detroit");
+      if (currentLocalHour !== targetHour) {
+        skipped++;
+        continue;
+      }
+
+
       const hoursNeeded = FREQUENCY_HOURS[sub.frequency] ?? 24;
       const sinceTs = sub.last_notified_at
         ? new Date(sub.last_notified_at)
