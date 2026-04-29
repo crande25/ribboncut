@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { BottomNav } from "@/components/BottomNav";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ThemeProvider } from "@/hooks/useTheme";
 import Index from "./pages/Index";
 import Settings from "./pages/Settings";
@@ -20,12 +21,14 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <div className="mx-auto min-h-screen max-w-lg pb-20 px-4 pt-6">
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/unsubscribe" element={<Unsubscribe />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/unsubscribe" element={<Unsubscribe />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </ErrorBoundary>
           </div>
           <BottomNav />
         </BrowserRouter>
