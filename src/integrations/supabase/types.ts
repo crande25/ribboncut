@@ -65,6 +65,48 @@ export type Database = {
         }
         Relationships: []
       }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          cities: string[]
+          created_at: string
+          device_id: string
+          enabled: boolean
+          endpoint: string
+          frequency: string
+          id: string
+          last_notified_at: string | null
+          p256dh: string
+          updated_at: string
+        }
+        Insert: {
+          auth: string
+          cities?: string[]
+          created_at?: string
+          device_id: string
+          enabled?: boolean
+          endpoint: string
+          frequency?: string
+          id?: string
+          last_notified_at?: string | null
+          p256dh: string
+          updated_at?: string
+        }
+        Update: {
+          auth?: string
+          cities?: string[]
+          created_at?: string
+          device_id?: string
+          enabled?: boolean
+          endpoint?: string
+          frequency?: string
+          id?: string
+          last_notified_at?: string | null
+          p256dh?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       restaurant_categories: {
         Row: {
           aliases: string[]
