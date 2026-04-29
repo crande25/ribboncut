@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[backfill-vibes] processing ${targets.length} restaurants (only_missing=${onlyMissing})`);
+    console.log(`[backfill-vibes] processing ${targets.length} restaurants (mode=${explicitIds.length > 0 ? "explicit" : (onlyMissing ? "only_missing" : "all")})`);
 
     const startedAt = Date.now();
     const results = { ok: 0, failed: 0, sources: { google: 0, yelp: 0, none: 0 } as Record<string, number> };
