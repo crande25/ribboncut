@@ -77,6 +77,8 @@ export type Database = {
           id: string
           last_notified_at: string | null
           p256dh: string
+          preferred_hour: number
+          timezone: string
           updated_at: string
         }
         Insert: {
@@ -90,6 +92,8 @@ export type Database = {
           id?: string
           last_notified_at?: string | null
           p256dh: string
+          preferred_hour?: number
+          timezone?: string
           updated_at?: string
         }
         Update: {
@@ -103,6 +107,8 @@ export type Database = {
           id?: string
           last_notified_at?: string | null
           p256dh?: string
+          preferred_hour?: number
+          timezone?: string
           updated_at?: string
         }
         Relationships: []

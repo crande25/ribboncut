@@ -18,6 +18,14 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return out;
 }
 
+function detectTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Detroit";
+  } catch {
+    return "America/Detroit";
+  }
+}
+
 function detectIOS(): boolean {
   const ua = navigator.userAgent;
   return /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
@@ -97,7 +105,8 @@ export function usePushNotifications(cities: string[], frequency: string): UsePu
   // When cities/frequency change while subscribed, push the update server-side.
   useEffect(() => {
     if (!subscribed || !deviceId) return;
-    const sig = JSON.stringify({ cities, frequency });
+    const tz = detectTimezone();
+    const sig = JSON.stringify({ cities, frequency, tz });
     if (sig === lastSyncRef.current) return;
     lastSyncRef.current = sig;
     (async () => {
@@ -112,6 +121,7 @@ export function usePushNotifications(cities: string[], frequency: string): UsePu
             subscription: { endpoint: json.endpoint, keys: json.keys },
             cities,
             frequency,
+            timezone: detectTimezone(),
           },
         });
       } catch (e) {
@@ -158,6 +168,7 @@ export function usePushNotifications(cities: string[], frequency: string): UsePu
           subscription: { endpoint: json.endpoint, keys: json.keys },
           cities,
           frequency,
+          timezone: detectTimezone(),
         },
       });
       if (error) throw error;

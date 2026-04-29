@@ -25,6 +25,28 @@ interface Subscription {
   last_notified_at: string | null;
   enabled: boolean;
   created_at: string;
+  timezone: string;
+  preferred_hour: number;
+}
+
+// Returns the current hour (0-23) at the given IANA timezone.
+function localHourIn(tz: string): number {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      hour12: false,
+    });
+    return parseInt(fmt.format(new Date()), 10);
+  } catch {
+    // Fallback to ET if the stored timezone is somehow invalid.
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Detroit",
+      hour: "numeric",
+      hour12: false,
+    });
+    return parseInt(fmt.format(new Date()), 10);
+  }
 }
 
 function buildBody(count: number, cities: string[]): { title: string; body: string } {
@@ -97,7 +119,16 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Cadence check
+      // Local-time-of-day gate: only deliver during the device's preferred hour.
+      // Cron runs hourly, so this naturally lands the push within that local hour.
+      const targetHour = sub.preferred_hour ?? 10;
+      const currentLocalHour = localHourIn(sub.timezone || "America/Detroit");
+      if (currentLocalHour !== targetHour) {
+        skipped++;
+        continue;
+      }
+
+
       const hoursNeeded = FREQUENCY_HOURS[sub.frequency] ?? 24;
       const sinceTs = sub.last_notified_at
         ? new Date(sub.last_notified_at)

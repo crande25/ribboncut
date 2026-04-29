@@ -14,9 +14,20 @@ interface SubscribeBody {
   };
   cities?: string[];
   frequency?: string;
+  timezone?: string;
 }
 
 const ALLOWED_FREQ = new Set(["daily", "3days", "weekly"]);
+
+// Validate IANA timezone string against the runtime's tz database.
+function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -41,6 +52,8 @@ Deno.serve(async (req) => {
       ? body.cities.filter((c) => typeof c === "string" && c.length > 0).slice(0, 50)
       : [];
     const frequency = ALLOWED_FREQ.has(String(body.frequency)) ? String(body.frequency) : "daily";
+    const tzCandidate = typeof body.timezone === "string" ? body.timezone.trim() : "";
+    const timezone = tzCandidate && isValidTimezone(tzCandidate) ? tzCandidate : "America/Detroit";
 
     if (!device_id || !endpoint || !p256dh || !auth) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
@@ -57,9 +70,11 @@ Deno.serve(async (req) => {
         auth,
         cities,
         frequency,
+        timezone,
         enabled: true,
         updated_at: new Date().toISOString(),
       }, { onConflict: "device_id" });
+
 
     if (error) {
       console.error("[subscribe-push] db error:", error.message);
@@ -68,7 +83,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`[subscribe-push] ok device=${device_id.slice(0, 8)} cities=${cities.length} freq=${frequency}`);
+    console.log(`[subscribe-push] ok device=${device_id.slice(0, 8)} cities=${cities.length} freq=${frequency} tz=${timezone}`);
     return new Response(JSON.stringify({ ok: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
