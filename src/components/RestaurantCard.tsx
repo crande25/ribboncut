@@ -50,7 +50,7 @@ export function RestaurantCard({ restaurant }: { restaurant: Restaurant }) {
         <div className="rounded-md bg-food/10 p-3">
           <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-food">
             <UtensilsCrossed className="h-3.5 w-3.5" />
-            Food
+            Offers
           </div>
           <p className="text-sm text-secondary-foreground">{restaurant.foodSummary}</p>
         </div>
