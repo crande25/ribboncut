@@ -210,7 +210,7 @@ export function RestaurantFeed() {
       <button
         onClick={handleRefresh}
         disabled={refreshing}
-        className="absolute right-2 top-2 z-10 rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+        className="absolute right-2 top-2 z-10 rounded-full bg-background/80 p-2 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
         aria-label="Refresh feed"
       >
         <RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} />
