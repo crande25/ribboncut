@@ -1,8 +1,14 @@
-// On-demand backfill of restaurant_categories for sightings first seen in the
-// last N days that don't yet have a cache row. Service-role gated.
+// Periodic refresh of restaurant metadata (price, rating, review_count,
+// categories) and vibe text for sightings whose `restaurant_metrics.updated_at`
+// is older than `staleness_days` (default 3) — OR which have no metrics row yet.
+//
+// Image URL is intentionally NOT touched: the image set at discovery is kept
+// stable to avoid surprise cover swaps. Other display fields (name, address,
+// phone, url, coordinates) are also left alone here — discover-new-restaurants
+// owns their initial write, and the Feed lazy-fills if any are missing.
 //
 // Invoke: POST /backfill-categories  (Authorization: Bearer <service_role>)
-//   body / query: { days?: 30, limit?: 500, dry_run?: false }
+//   body / query: { staleness_days?: 3, limit?: 500, dry_run?: false }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -124,9 +130,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Service-role-only gate. Compare the bearer token to the exact service
-    // role key string. Do NOT decode JWT payloads without verifying the
-    // signature — unsigned tokens with `role=service_role` could be forged.
+    // Service-role-only gate.
     const authHeader = req.headers.get("Authorization") ?? "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
     const authorized = token.length > 0 && token === SUPABASE_SERVICE_ROLE_KEY;
@@ -136,89 +140,82 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Parse params (query OR JSON body)
+    // Params
     const url = new URL(req.url);
-    let days = parseInt(url.searchParams.get("days") || "30", 10);
+    let stalenessDays = parseInt(url.searchParams.get("staleness_days") || "3", 10);
     let limit = parseInt(url.searchParams.get("limit") || "500", 10);
     let dryRun = url.searchParams.get("dry_run") === "true";
     if (req.method === "POST") {
       try {
         const body = await req.json();
-        if (typeof body?.days === "number") days = body.days;
+        if (typeof body?.staleness_days === "number") stalenessDays = body.staleness_days;
         if (typeof body?.limit === "number") limit = body.limit;
         if (typeof body?.dry_run === "boolean") dryRun = body.dry_run;
       } catch (_) { /* no body, ok */ }
     }
-    days = Math.max(1, Math.min(days, 365));
+    stalenessDays = Math.max(1, Math.min(stalenessDays, 365));
     limit = Math.max(1, Math.min(limit, 5000));
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    const stalenessCutoff = new Date(Date.now() - stalenessDays * 24 * 3600 * 1000).toISOString();
 
-    // Pull recent sightings (paginate past PostgREST 1000-row default)
-    const sightings: { yelp_id: string; city: string; first_seen_at: string }[] = [];
+    // 1. Get all sighting yelp_ids (paginate past 1000-row default).
+    const allSightings: { yelp_id: string; city: string }[] = [];
     const PAGE = 1000;
-    for (let from = 0; from < limit; from += PAGE) {
-      const to = Math.min(from + PAGE, limit) - 1;
-      const { data: page, error: sErr } = await supabase
+    for (let from = 0; ; from += PAGE) {
+      const { data: page, error } = await supabase
         .from("restaurant_sightings")
-        .select("yelp_id, city, first_seen_at")
-        .gte("first_seen_at", since)
-        .order("first_seen_at", { ascending: false })
-        .range(from, to);
-      if (sErr) {
-        console.error("sightings query error", sErr);
-        return new Response(JSON.stringify({ error: sErr.message }), {
+        .select("yelp_id, city")
+        .range(from, from + PAGE - 1);
+      if (error) {
+        return new Response(JSON.stringify({ error: error.message }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       if (!page || page.length === 0) break;
-      sightings.push(...page);
-      if (page.length < to - from + 1) break;
+      allSightings.push(...page);
+      if (page.length < PAGE) break;
     }
 
-    if (sightings.length === 0) {
-      return new Response(JSON.stringify({ scanned: 0, refreshable: 0, updated: 0, days, limit }), {
+    if (allSightings.length === 0) {
+      return new Response(JSON.stringify({ scanned: 0, refreshable: 0, updated: 0 }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Always refresh every sighting (values like price/rating/review_count drift over time).
-    // Order STALEST FIRST so a partial run (quota exhaustion) prioritizes the most outdated rows.
-    const ids = sightings.map((s) => s.yelp_id);
-    const staleness = new Map<string, number>(); // yelp_id -> min(updated_at ms) across cache tables, or 0 if uncached
-    for (const id of ids) staleness.set(id, 0);
-    const [{ data: catRows }, { data: metRows }] = await Promise.all([
-      supabase.from("restaurant_categories").select("yelp_id, updated_at").in("yelp_id", ids),
-      supabase.from("restaurant_metrics").select("yelp_id, updated_at").in("yelp_id", ids),
-    ]);
-    const catMap = new Map<string, number>();
-    for (const r of catRows || []) catMap.set(r.yelp_id, new Date(r.updated_at).getTime());
-    const metMap = new Map<string, number>();
-    for (const r of metRows || []) metMap.set(r.yelp_id, new Date(r.updated_at).getTime());
-    for (const id of ids) {
-      const c = catMap.get(id);
-      const m = metMap.get(id);
-      // Uncached (missing either) → staleness 0 (highest priority).
-      // Otherwise use the older of the two cache timestamps.
-      if (c === undefined || m === undefined) staleness.set(id, 0);
-      else staleness.set(id, Math.min(c, m));
+    // 2. Fetch metrics.updated_at for staleness filter.
+    const ids = allSightings.map((s) => s.yelp_id);
+    const metricsUpdated = new Map<string, number>(); // yelp_id -> updated_at ms; absent = no metrics row
+    for (let i = 0; i < ids.length; i += 1000) {
+      const slice = ids.slice(i, i + 1000);
+      const { data: rows } = await supabase
+        .from("restaurant_metrics")
+        .select("yelp_id, updated_at")
+        .in("yelp_id", slice);
+      for (const r of rows || []) metricsUpdated.set(r.yelp_id, new Date(r.updated_at).getTime());
     }
-    const refreshTargets = [...sightings].sort(
-      (a, b) => (staleness.get(a.yelp_id) ?? 0) - (staleness.get(b.yelp_id) ?? 0),
-    );
+    const cutoffMs = new Date(stalenessCutoff).getTime();
 
-    const uncachedCount = refreshTargets.filter((s) => staleness.get(s.yelp_id) === 0).length;
-    console.log(`[backfill] scanned=${sightings.length} refreshing=${refreshTargets.length} (uncached=${uncachedCount}, recached=${refreshTargets.length - uncachedCount}) days=${days} dry=${dryRun}`);
+    // 3. Build refresh list: missing metrics OR metrics older than cutoff. Stalest first.
+    const refreshTargets = allSightings
+      .filter((s) => {
+        const ts = metricsUpdated.get(s.yelp_id);
+        return ts === undefined || ts < cutoffMs;
+      })
+      .sort((a, b) => (metricsUpdated.get(a.yelp_id) ?? 0) - (metricsUpdated.get(b.yelp_id) ?? 0))
+      .slice(0, limit);
+
+    const uncachedCount = refreshTargets.filter((s) => !metricsUpdated.has(s.yelp_id)).length;
+    console.log(`[refresh-metrics] sightings=${allSightings.length} stale=${refreshTargets.length} (uncached=${uncachedCount}, restale=${refreshTargets.length - uncachedCount}) staleness_days=${stalenessDays} dry=${dryRun}`);
 
     if (dryRun) {
       return new Response(JSON.stringify({
-        scanned: sightings.length, refreshable: refreshTargets.length, updated: 0, metrics_updated: 0,
+        scanned: allSightings.length, refreshable: refreshTargets.length, updated: 0, metrics_updated: 0,
         sample: refreshTargets.slice(0, 10).map((m) => ({
           yelp_id: m.yelp_id, city: m.city,
-          cache_age_ms: staleness.get(m.yelp_id) ? Date.now() - (staleness.get(m.yelp_id) as number) : null,
+          metrics_age_ms: metricsUpdated.get(m.yelp_id) ? Date.now() - (metricsUpdated.get(m.yelp_id) as number) : null,
         })),
-        days, limit, dry_run: true,
+        staleness_days: stalenessDays, limit, dry_run: true,
       }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -226,7 +223,9 @@ Deno.serve(async (req) => {
     await pool.load();
 
     let updated = 0;
-    let metricsUpdated = 0;
+    let metricsUpdatedCount = 0;
+    let vibesRefreshed = 0;
+    let vibesFailed = 0;
     let yelpErrors = 0;
     let exhausted = false;
 
@@ -234,17 +233,17 @@ Deno.serve(async (req) => {
       const detailRes = await pool.fetch(`${YELP_API_URL}/businesses/${m.yelp_id}`);
       if (!detailRes.ok) {
         if (detailRes.exhaustedAllKeys) {
-          console.error(`[backfill] ALL YELP KEYS EXHAUSTED at ${m.yelp_id}`);
+          console.error(`[refresh-metrics] ALL YELP KEYS EXHAUSTED at ${m.yelp_id}`);
           exhausted = true;
           break;
         }
-        console.error(`[backfill] yelp error ${detailRes.status} for ${m.yelp_id}`);
+        console.error(`[refresh-metrics] yelp error ${detailRes.status} for ${m.yelp_id}`);
         yelpErrors++;
         continue;
       }
       const biz = detailRes.body;
 
-      // Categories — always refresh
+      // Categories (Offers) — refresh
       const aliases = (biz.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean);
       const titles = (biz.categories || []).map((c: any) => String(c.title || "")).filter(Boolean);
       const { error: upErr } = await supabase
@@ -254,12 +253,14 @@ Deno.serve(async (req) => {
           { onConflict: "yelp_id" },
         );
       if (upErr) {
-        console.error(`[backfill] categories upsert failed ${m.yelp_id}: ${upErr.message}`);
+        console.error(`[refresh-metrics] categories upsert failed ${m.yelp_id}: ${upErr.message}`);
       } else {
         updated++;
       }
 
-      // Metrics — always refresh
+      // Metrics — refresh price/rating/review_count ONLY. Image URL and other
+      // display fields (name/address/phone/url/coords) are intentionally not
+      // touched here; they were set by discover-new-restaurants on first sight.
       const priceLevel = typeof biz.price === "string" && biz.price.length > 0 ? biz.price.length : null;
       const { error: metErr } = await supabase
         .from("restaurant_metrics")
@@ -274,22 +275,45 @@ Deno.serve(async (req) => {
           { onConflict: "yelp_id" },
         );
       if (metErr) {
-        console.error(`[backfill] metrics upsert failed ${m.yelp_id}: ${metErr.message}`);
+        console.error(`[refresh-metrics] metrics upsert failed ${m.yelp_id}: ${metErr.message}`);
       } else {
-        metricsUpdated++;
+        metricsUpdatedCount++;
       }
 
-      console.log(`[backfill] refreshed ${m.yelp_id} (${m.city}) price=${priceLevel} rating=${biz.rating} reviews=${biz.review_count} aliases=[${aliases.join(",")}]`);
+      // Vibe — regenerate (overwrites atmosphere_cache)
+      try {
+        const vRes = await fetch(`${SUPABASE_URL}/functions/v1/generate-vibe`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          },
+          body: JSON.stringify({ yelp_id: m.yelp_id }),
+        });
+        const vData = await vRes.json();
+        if (vData?.ok) vibesRefreshed++;
+        else { vibesFailed++; console.warn(`[refresh-metrics→vibe] ${m.yelp_id} failed: ${vData?.reason || vRes.status}`); }
+      } catch (e) {
+        vibesFailed++;
+        console.error(`[refresh-metrics→vibe] ${m.yelp_id} threw: ${e instanceof Error ? e.message : e}`);
+      }
+
+      console.log(`[refresh-metrics] refreshed ${m.yelp_id} (${m.city}) price=${priceLevel} rating=${biz.rating} reviews=${biz.review_count} aliases=[${aliases.join(",")}]`);
+
+      // Light throttle between businesses to spare downstream services.
+      await new Promise((r) => setTimeout(r, 250));
     }
 
     return new Response(JSON.stringify({
-      scanned: sightings.length, refreshable: refreshTargets.length, updated, metrics_updated: metricsUpdated,
-      yelp_errors: yelpErrors, exhausted, days, limit,
+      scanned: allSightings.length, refreshable: refreshTargets.length,
+      updated, metrics_updated: metricsUpdatedCount,
+      vibes_refreshed: vibesRefreshed, vibes_failed: vibesFailed,
+      yelp_errors: yelpErrors, exhausted, staleness_days: stalenessDays, limit,
     }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error("backfill-categories error:", msg);
+    console.error("refresh-metrics error:", msg);
     return new Response(JSON.stringify({ error: msg }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

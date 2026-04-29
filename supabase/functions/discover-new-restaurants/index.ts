@@ -597,6 +597,7 @@ Deno.serve(async (req) => {
     }> = [];
 
     let totalInserted = 0;
+    const insertedYelpIds = new Set<string>();
 
     // Process cities in batches — one Gemini grounded call per batch (cuts daily
     // grounded-call usage to fit free-tier 20/day cap).
@@ -651,52 +652,53 @@ Deno.serve(async (req) => {
           if (inserted && inserted.length > 0) {
             cityResult.inserted++;
             totalInserted++;
+            insertedYelpIds.add(hit.yelp_id);
             console.log(`[db ${cand.city}] INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}"`);
-          } else {
-            console.log(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — duplicate (already in restaurant_sightings)`);
-          }
 
-          // Cache categories (upsert; refreshes on each verified sighting)
-          const { error: catErr } = await supabase
-            .from("restaurant_categories")
-            .upsert(
-              {
-                yelp_id: hit.yelp_id,
-                aliases: hit.categoryAliases,
-                titles: hit.categoryTitles,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: "yelp_id" },
-            );
-          if (catErr) {
-            console.error(`[cache ${cand.city}] categories upsert failed yelp_id=${hit.yelp_id}: ${catErr.message}`);
-          } else {
-            console.log(`[cache ${cand.city}] categories cached yelp_id=${hit.yelp_id} aliases=[${hit.categoryAliases.join(",")}]`);
-          }
+            // Cache categories — only on first insertion (NEW sightings only).
+            const { error: catErr } = await supabase
+              .from("restaurant_categories")
+              .upsert(
+                {
+                  yelp_id: hit.yelp_id,
+                  aliases: hit.categoryAliases,
+                  titles: hit.categoryTitles,
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: "yelp_id" },
+              );
+            if (catErr) {
+              console.error(`[cache ${cand.city}] categories upsert failed yelp_id=${hit.yelp_id}: ${catErr.message}`);
+            } else {
+              console.log(`[cache ${cand.city}] categories cached yelp_id=${hit.yelp_id} aliases=[${hit.categoryAliases.join(",")}]`);
+            }
 
-          // Cache metrics + display fields (price, rating, review count, name, image, address, phone, url, coords)
-          const { error: metErr } = await supabase
-            .from("restaurant_metrics")
-            .upsert(
-              {
-                yelp_id: hit.yelp_id,
-                price_level: hit.priceLevel,
-                rating: hit.rating,
-                review_count: hit.reviewCount,
-                name: hit.yelp_name,
-                image_url: hit.imageUrl,
-                address: hit.address,
-                phone: hit.phone,
-                url: hit.url,
-                coordinates: hit.coordinates,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: "yelp_id" },
-            );
-          if (metErr) {
-            console.error(`[metrics ${cand.city}] upsert failed yelp_id=${hit.yelp_id}: ${metErr.message}`);
+            // Cache metrics + display fields — only on first insertion (NEW sightings only).
+            const { error: metErr } = await supabase
+              .from("restaurant_metrics")
+              .upsert(
+                {
+                  yelp_id: hit.yelp_id,
+                  price_level: hit.priceLevel,
+                  rating: hit.rating,
+                  review_count: hit.reviewCount,
+                  name: hit.yelp_name,
+                  image_url: hit.imageUrl,
+                  address: hit.address,
+                  phone: hit.phone,
+                  url: hit.url,
+                  coordinates: hit.coordinates,
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: "yelp_id" },
+              );
+            if (metErr) {
+              console.error(`[metrics ${cand.city}] upsert failed yelp_id=${hit.yelp_id}: ${metErr.message}`);
+            } else {
+              console.log(`[metrics ${cand.city}] cached yelp_id=${hit.yelp_id} price=${hit.priceLevel} rating=${hit.rating} reviews=${hit.reviewCount}`);
+            }
           } else {
-            console.log(`[metrics ${cand.city}] cached yelp_id=${hit.yelp_id} price=${hit.priceLevel} rating=${hit.rating} reviews=${hit.reviewCount}`);
+            console.log(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — duplicate (already in restaurant_sightings); skipping metadata refresh`);
           }
         }
 
@@ -724,22 +726,18 @@ Deno.serve(async (req) => {
       summary,
     }, null, 2));
 
-    // Inline vibe-fill: generate vibes for any sighting that lacks one in
-    // atmosphere_cache. Runs sequentially with a small delay so we don't
-    // hammer Google Places / Lovable AI. One failure does not stop the batch.
+    // Inline vibe-fill: generate vibes for sightings inserted IN THIS RUN only.
+    // Existing sightings keep their cached vibe (refreshed by the periodic
+    // refresh-metrics job, not here).
     let vibeFill = { processed: 0, ok: 0, failed: 0 };
     try {
-      const { data: allSightings } = await supabase
-        .from("restaurant_sightings")
-        .select("yelp_id");
       const { data: cachedVibes } = await supabase
         .from("atmosphere_cache")
-        .select("yelp_id");
+        .select("yelp_id")
+        .in("yelp_id", Array.from(insertedYelpIds));
       const cachedSet = new Set((cachedVibes || []).map((c: any) => c.yelp_id));
-      const missing = (allSightings || [])
-        .map((s: any) => s.yelp_id as string)
-        .filter((id) => !cachedSet.has(id));
-      console.log(`[discover→vibe] ${missing.length} sightings missing vibes`);
+      const missing = Array.from(insertedYelpIds).filter((id) => !cachedSet.has(id));
+      console.log(`[discover→vibe] ${missing.length} newly-inserted sightings missing vibes (of ${insertedYelpIds.size} inserted this run)`);
       vibeFill.processed = missing.length;
       for (let i = 0; i < missing.length; i++) {
         try {
