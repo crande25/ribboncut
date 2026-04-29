@@ -22,7 +22,10 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         navigateFallbackDenylist: [/^\/~oauth/],
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // Exclude PNG/SVG from precache so icon/image updates aren't pinned
+        // to the old service worker version. The browser HTTP cache + ?v=
+        // query strings handle freshness for these.
+        globPatterns: ["**/*.{js,css,html,ico,woff2}"],
       },
       manifest: false, // We use our own manifest.json in public/
     }),
