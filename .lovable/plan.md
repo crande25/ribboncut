@@ -1,30 +1,78 @@
-## Rename app to "RibbonCut"
+## Goal
 
-Replace every user-visible and config reference to "PlatePing" with "RibbonCut" across the codebase. The change is purely textual — no schema, no logic, no asset regeneration.
+Surface the RibbonCut name in two specific places without adding permanent chrome to the Feed.
 
-### Files to change
+---
 
-**App shell / PWA metadata**
-- `index.html` — `<title>`, `og:title`, `apple-mobile-web-app-title` → "RibbonCut" (tagline kept as "What Just Opened?")
-- `public/manifest.json` — `name`, `short_name`
-- `capacitor.config.ts` — `appName: "RibbonCut"` (leave `appId` alone; changing it would break existing installs)
+## 1. Settings page header
 
-**UI copy**
-- `src/components/InstallAppCard.tsx` — "Add PlatePing…", "Install PlatePing"
-- `src/components/PushNotificationsCard.tsx` — "Install PlatePing first", "add PlatePing"
+**File:** `src/pages/Settings.tsx` (line 90)
 
-**Edge functions**
-- `supabase/functions/test-push/index.ts` — push title "PlatePing test 🍽️" → "RibbonCut test 🍽️"; default `VAPID_SUBJECT` mailto fallback `noreply@plateping.app` → `noreply@ribboncut.app`
-- `supabase/functions/send-push-notifications/index.ts` — same `VAPID_SUBJECT` mailto fallback
+Replace the current `<h1>Settings ⚙️</h1>` with a two-line header:
+- Top line: `<h1>RibbonCut</h1>` — large, bold, primary-colored wordmark (the brand).
+- Bottom line: small muted "Settings" subtitle so users still know where they are.
 
-### Out of scope (call out, don't change)
+The "Clear Filters" button stays in its current right-aligned position, vertically centered against the new stacked header.
 
-- **Capacitor `appId`** (`app.lovable.157d...`) — opaque, no brand string, leaving as-is to avoid breaking native app identity.
-- **Icon images** (`favicon.png`, `pwa-icon-192.png`, `pwa-icon-512.png`) — if these visually contain the old name/logo, they'll need to be regenerated separately. I won't touch the binaries.
-- **VAPID_SUBJECT secret** — the live secret value is set in Cloud and overrides the code fallback. If it's currently `mailto:…@plateping.app` you should update it in the secrets panel.
-- **Domain / published URL** — the `lovable.app` preview URL is unchanged; a custom domain rename is a separate step.
-- **Database identifiers** (table names, project ref) — none contain the brand name.
+Approx markup:
+```tsx
+<div className="flex items-end justify-between gap-3">
+  <div className="space-y-0.5">
+    <h1 className="text-2xl font-bold tracking-tight text-primary">RibbonCut</h1>
+    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Settings</p>
+  </div>
+  {hasAnyFilter && (/* existing Clear Filters button */)}
+</div>
+```
 
-### After the rename
+No other Settings sections change.
 
-You'll likely also want new icon art and (optionally) a new VAPID_SUBJECT email — let me know and I can handle those as follow-ups.
+---
+
+## 2. Feed loading & empty states — brand splash
+
+**File:** `src/components/RestaurantFeed.tsx`
+
+Add a centered brand splash that appears in three scenarios:
+- Initial loading (`loading && selectedCities.length > 0`)
+- No locations selected (`selectedCities.length === 0 && !loading`)
+- Empty results (`selectedCities.length > 0 && restaurants.length === 0` after load)
+
+It replaces (loading) or sits above (empty states) the existing skeleton/empty UI. Once `restaurants.length > 0`, the splash is not rendered — restaurant cards take over. This keeps the Feed clean during normal use (no permanent header) while still name-dropping when the screen is otherwise empty.
+
+### Splash component (inline, top of the feed body)
+
+```tsx
+<div className="flex flex-col items-center gap-2 py-10 text-center animate-in fade-in duration-500">
+  <h1 className="text-4xl font-bold tracking-tight text-primary">RibbonCut</h1>
+  <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+    What just opened
+  </p>
+</div>
+```
+
+### Integration
+
+- Remove the current small `<h1>What Just Opened 🍽️</h1>` heading from line 203 — it duplicates branding and creates the "permanent chrome" we want to avoid.
+- Keep the refresh button, but move it to a top-right floating position (absolute, top-right of the feed container) so it remains accessible without anchoring a header bar.
+- Render the splash above the loading skeletons, the "Select at least one location" card, and the "Nothing new yet!" card.
+- When `restaurants.length > 0`, only the cards render — no splash, no header. Pure content.
+
+### Behavior summary
+
+| State | What user sees |
+|---|---|
+| First load (with cities) | RibbonCut splash + skeletons |
+| No cities selected | RibbonCut splash + "Select at least one location" prompt |
+| Loaded, empty results | RibbonCut splash + "Nothing new yet!" |
+| Loaded, has results | Just the restaurant cards (refresh button floats top-right) |
+
+The splash naturally fades in via Tailwind's `animate-in fade-in` utility. It is not separately animated out — it simply unmounts when results arrive, which is visually clean given the skeleton-to-card transition.
+
+---
+
+## Out of scope
+
+- No logo image — text wordmark only (matches existing minimal aesthetic).
+- No changes to BottomNav, RestaurantCard, or any other component.
+- No new design tokens; uses existing `text-primary` and `text-muted-foreground`.

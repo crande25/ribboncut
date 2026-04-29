@@ -191,25 +191,30 @@ export function RestaurantFeed() {
   });
 
   return (
-    <div ref={containerRef} className="space-y-4 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch" }}>
+    <div ref={containerRef} className="relative space-y-4 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch" }}>
       <PullToRefreshIndicator
         pullDistance={pullDistance}
         refreshing={pullRefreshing}
         isPastThreshold={isPastThreshold}
       />
 
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">What Just Opened 🍽️</h1>
+      {(loading || restaurants.length === 0) && (
+        <div className="flex flex-col items-center gap-2 py-10 text-center animate-in fade-in duration-500">
+          <h1 className="text-4xl font-bold tracking-tight text-primary">RibbonCut</h1>
+          <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            What just opened
+          </p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
-        >
-          <RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} />
-        </button>
-      </div>
+      )}
+
+      <button
+        onClick={handleRefresh}
+        disabled={refreshing}
+        className="absolute right-2 top-2 z-10 rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+        aria-label="Refresh feed"
+      >
+        <RefreshCw className={`h-5 w-5 ${refreshing ? "animate-spin" : ""}`} />
+      </button>
 
       {selectedCities.length === 0 && !loading && (
         <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-12 text-center">
