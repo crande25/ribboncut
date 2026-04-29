@@ -72,7 +72,7 @@ export function NotificationsCard() {
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            Pick a cadence to get pinged when new restaurants open in your saved cities.
+            Pick a cadence to get pinged when new restaurants open in your saved locations.
             Select again to turn notifications off.
           </p>
 
