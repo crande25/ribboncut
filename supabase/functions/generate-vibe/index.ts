@@ -479,7 +479,7 @@ Deno.serve(async (req) => {
 
     // Step 3: summarize via Lovable AI (works even with zero reviews — model
     // will produce a generic neutral description from cuisine alone).
-    const vibe = await summarizeReviews(metrics.name, cuisine, reviews, LOVABLE_API_KEY);
+    const vibe = await summarizeReviews(workingMetrics.name!, cuisine, reviews, LOVABLE_API_KEY);
     if (!vibe) {
       return new Response(JSON.stringify({ ok: false, source, reason: "ai failed" }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
