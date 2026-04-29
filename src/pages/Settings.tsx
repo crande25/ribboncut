@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin, DollarSign, Star } from "lucide-react";
 import { CityChecklist } from "@/components/CityChecklist";
 import { InstallAppCard } from "@/components/InstallAppCard";
+import { PushNotificationsCard } from "@/components/PushNotificationsCard";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
 import { useTheme } from "@/hooks/useTheme";
@@ -98,6 +99,8 @@ export default function Settings() {
       </div>
 
       <InstallAppCard />
+
+      <PushNotificationsCard />
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
@@ -281,7 +284,7 @@ export default function Settings() {
           <h2 className="text-sm font-semibold text-foreground">Notification Frequency</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          How often should we ping you? (Coming soon!)
+          How often should we ping you about new restaurants?
         </p>
         <div className="flex gap-2">
           {scheduleOptions.map((opt) => (
