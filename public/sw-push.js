@@ -14,7 +14,7 @@ self.addEventListener("push", (event) => {
   const options = {
     body: data.body,
     icon: "/pwa-icon-192.png",
-    badge: "/pwa-icon-192.png",
+    badge: "/notification-badge.png",
     tag: data.tag || "plateping",
     data: { url: data.url || "/" },
     renotify: true,
