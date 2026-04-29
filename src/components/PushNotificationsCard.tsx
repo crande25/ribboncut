@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Bell, Send } from "lucide-react";
+import { Bell, Send, Share, Plus } from "lucide-react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { cn } from "@/lib/utils";
@@ -57,13 +57,28 @@ export function NotificationsCard() {
       </div>
 
       {needsIOSInstall ? (
-        <div className="rounded-lg border border-border bg-secondary/50 p-4 space-y-2 text-xs text-muted-foreground">
+        <div className="rounded-lg border border-border bg-secondary/50 p-4 space-y-3 text-xs text-muted-foreground">
           <p className="text-foreground font-medium">Install RibbonCut first 📲</p>
           <p>
             On iPhone & iPad, push notifications only work after you add RibbonCut
-            to your home screen. Use the <span className="text-foreground font-medium">Install App</span>{" "}
-            section above, then come back here.
+            to your home screen.
           </p>
+          <ol className="space-y-1.5 list-decimal list-inside">
+            <li className="flex flex-wrap items-center gap-1.5">
+              <span>Tap the Share button</span>
+              <Share className="h-3.5 w-3.5 inline text-primary" />
+              <span>in your browser</span>
+            </li>
+            <li className="flex flex-wrap items-center gap-1.5">
+              <span>Choose</span>
+              <span className="text-foreground font-medium">Add to Home Screen</span>
+              <Plus className="h-3.5 w-3.5 inline text-primary" />
+            </li>
+            <li>
+              Tap <span className="text-foreground font-medium">Add</span>, then open
+              RibbonCut from your home screen and come back here.
+            </li>
+          </ol>
         </div>
       ) : !supported ? (
         <p className="text-xs text-muted-foreground">
