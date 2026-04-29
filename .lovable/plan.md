@@ -1,59 +1,53 @@
 ## Goal
 
-Stop redundant metadata refreshes. Make ownership of each metadata field clear:
+Add a small, out-of-the-way "Contact us" affordance on the Settings page. Submissions are persisted to the database AND emailed to crande25@gmail.com so messages reliably reach you personally.
 
-- **discover-new-restaurants**: only writes metadata for **NEW** sightings (first time we see them). Never overwrites existing rows.
-- **nightly-backfill-categories**: refreshes Price / Rating / Review Count / Categories (Offers) and re-generates Vibe for any sighting whose metadata is older than **3 days**. Image is preserved (not overwritten).
-- **get-restaurants** (Feed): no time-based lazy refresh. Only fills a field when the cached value is genuinely missing (null/empty).
+## UX
 
-## Changes
+- A small "Contact us" text link at the bottom of Settings, just above the Device ID block. Subtle (muted-foreground, small font), tappable.
+- Tapping opens a dialog (using existing shadcn `Dialog`) with:
+  - Optional email input (placeholder: "Your email (optional)")
+  - Required message textarea (placeholder: "Tell us what's on your mind…")
+  - Two controls: **Send** (primary, disabled until message is non-empty) and **Cancel** (secondary, closes the dialog and discards in-progress text)
+- On successful submit: dialog closes, toast shows "Thanks, message received!"
+- On failure: toast shows error, dialog stays open so user can retry.
 
-### 1. `supabase/functions/discover-new-restaurants/index.ts`
+## Backend
 
-- Change the categories upsert (lines ~660-670) and metrics upsert (lines ~678-695) so they only write when the row does **not** already exist for that `yelp_id`. Approach: change the `restaurant_sightings` upsert to capture whether it actually inserted (it already uses `ignoreDuplicates: true` and selects); only run the categories + metrics upserts inside the `if (inserted && inserted.length > 0)` branch.
-- The trailing "vibe-fill" phase (lines ~727-766) currently iterates **all** sightings missing a vibe. Narrow it to vibes for sightings inserted in **this run** only (track inserted yelp_ids in a Set during the loop, then only generate-vibe for those). This keeps new-discovery vibes flowing without re-touching existing ones.
+1. **Email domain setup** — No domain is configured yet. The plan starts by opening the email domain setup dialog so you can add a sender domain. Once configured, setup continues automatically.
+2. **Email infrastructure** — Provision Lovable Emails infrastructure (queue, tables, cron).
+3. **Transactional email scaffold** — Generate the `send-transactional-email` edge function and unsubscribe handler.
+4. **`feedback-received` template** — A branded React Email template that renders the message + optional sender email. Hardcoded to deliver to crande25@gmail.com (your address baked into the send call). `reply_to` is set to the submitter's email when provided, so you can reply directly from your inbox.
+5. **`feedback` table** — Durable record so nothing is ever lost even if email delivery fails:
+   - `id uuid pk`, `message text not null`, `sender_email text null`, `device_id text null`, `created_at timestamptz default now()`
+   - RLS: anonymous INSERT allowed (with length checks via trigger), no SELECT/UPDATE/DELETE for clients. You can read it via the backend.
+6. **Unsubscribe page** — Required by the transactional email system; a small `/unsubscribe` route added to handle the system-appended unsubscribe footer (won't realistically be used since emails go to you, but it's required infrastructure).
 
-### 2. `supabase/functions/backfill-categories/index.ts`
+## Submission flow
 
-- Replace the "scan last N days of sightings" logic with: **select sightings whose `restaurant_metrics.updated_at` is older than 3 days OR is missing**, regardless of `first_seen_at`. Keep the staleness-first ordering for partial runs.
-- For each target, fetch Yelp business detail and upsert `restaurant_categories` (aliases/titles) and `restaurant_metrics` (price_level, rating, review_count) — but **do NOT overwrite `image_url`** (leave the column out of the upsert payload entirely so the existing value is preserved). Other display fields (name, address, phone, url, coordinates) — leave those out too unless they were null, since the user only asked us to refresh price/rating/offers/vibe. Simplest rule: the periodic upsert touches only `price_level`, `rating`, `review_count`, `updated_at`.
-- After upserting metrics+categories, call `generate-vibe` for the same yelp_id to refresh the vibe text (fire sequentially with the existing throttle pattern from `backfill-vibes`).
-- Rename the function description / log prefixes from "backfill" to "refresh" since it's no longer a one-off.
-- The `days` and `since`-based parameters become irrelevant; replace with a `staleness_days` param (default 3) and keep `limit` and `dry_run`.
+1. Client validates: message trimmed non-empty, ≤ 2000 chars; email (if provided) is a valid format, ≤ 255 chars. Uses zod.
+2. Client inserts row into `feedback` with a generated UUID.
+3. Client invokes `send-transactional-email` with `templateName: 'feedback-received'`, `recipientEmail: 'crande25@gmail.com'`, `idempotencyKey: feedback-${id}`, `templateData: { message, senderEmail }`, and `replyTo: senderEmail` if provided.
+4. Toast confirmation; dialog closes.
 
-### 3. `supabase/functions/get-restaurants/index.ts`
+If the email send fails, the row still exists in the database — you don't lose the feedback. The toast still says "received" since the durable record succeeded; email is best-effort delivery.
 
-- Remove the 72-hour `CACHE_TTL_MS` freshness gate (lines ~182-191, ~330-333). Replace the `isCacheFresh()` check with `isCacheUsable()` — true when the cached metrics row exists AND has a non-empty `name`, `image_url`, `rating`, `price_level`, etc. (i.e. all the fields the card needs to render).
-- When `isCacheUsable()` returns true → serve from cache, **never** hit Yelp.
-- When false → fetch Yelp detail and lazy-write the missing fields (existing lazy-write blocks already do this; keep them).
-- Keep the existing inline vibe-fill block (lines ~245-294) — vibes that are missing should still be generated on demand. No change to its behavior (it already only fills when `atmosphereMap` lacks the entry).
+## Cost
 
-### 4. Cron schedule
+Free. Lovable Cloud + Lovable Emails are included.
 
-The user mentioned "every three days after they're discovered" — the existing `nightly-backfill-categories` cron (09:00 UTC daily) is fine because the function itself filters by 3-day staleness. No cron change needed unless the user wants a different cadence.
+## Files to add/change
 
-## Technical details
+- **New**: `src/components/ContactUsDialog.tsx` (form + dialog)
+- **New**: `src/pages/Unsubscribe.tsx` (required by email system)
+- **Edit**: `src/pages/Settings.tsx` (add the small link near the bottom)
+- **Edit**: `src/App.tsx` (add `/unsubscribe` route)
+- **New (backend)**: `feedback` table + RLS policies via migration
+- **New (backend)**: `supabase/functions/_shared/transactional-email-templates/feedback-received.tsx` and registry entry
+- **New (backend)**: `send-transactional-email`, `handle-email-unsubscribe`, `handle-email-suppression` edge functions (auto-scaffolded)
 
-**Files modified**
-- `supabase/functions/discover-new-restaurants/index.ts`
-- `supabase/functions/backfill-categories/index.ts`
-- `supabase/functions/get-restaurants/index.ts`
+## What you'll need to do once
 
-**No DB schema changes.** All logic uses existing `restaurant_metrics.updated_at`.
+When the email setup dialog appears, add a sender subdomain (e.g. `notify.yourdomain.com`) and the system will walk you through adding a couple of NS records at your domain registrar. DNS verification can take a few hours but doesn't block the rest of the build — the contact form will be live immediately, and emails will start flowing once verification completes. In the meantime, every submission is still saved to the `feedback` table.
 
-**Behavior matrix after change**
-
-| Field | discover (new only) | backfill (every 3d) | Feed (lazy) |
-|---|---|---|---|
-| name | write | — | write if missing |
-| image_url | write | — (preserved) | write if missing |
-| address/phone/url/coords | write | — | write if missing |
-| price_level | write | refresh | write if missing |
-| rating | write | refresh | write if missing |
-| review_count | write | refresh | write if missing |
-| categories (Offers) | write | refresh | write if missing |
-| vibe (atmosphere) | generate | regenerate | generate if missing |
-
-## Open question
-
-The user said "Image" is excluded from the 3-day refresh. Confirming: the image set at discovery is kept forever (until manually re-discovered) — sound right? If you ever want image refresh on a longer cadence (e.g. every 30d), say so and I'll add it.
+If you don't own a domain yet, let me know and I'll suggest alternatives (e.g. Discord webhook fallback) before proceeding.
