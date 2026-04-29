@@ -127,16 +127,19 @@ export function RestaurantFeed() {
     setLoadingMore(true);
 
     try {
-      const { results, hasMore: more } = await fetchPage(currentOffset);
+      const { results, hasMore: more, nextOffset } = await fetchPage(currentOffset);
       if (results.length > 0) {
         setRestaurants((prev) => {
           const existingIds = new Set(prev.map((r) => r.id));
           const unique = results.filter((r) => !existingIds.has(r.id));
           return [...prev, ...unique];
         });
-        setCurrentOffset((prev) => prev + results.length);
       }
-      setHasMore(more && results.length > 0);
+      // Always advance the cursor by the requested page size — even when this
+      // page returned 0 results after server-side filtering — so we keep
+      // walking until we've covered the unfiltered `total`.
+      setCurrentOffset(nextOffset);
+      setHasMore(more);
     } catch {
       setHasMore(false);
     }
