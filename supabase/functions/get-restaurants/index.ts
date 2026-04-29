@@ -63,6 +63,10 @@ Deno.serve(async (req) => {
     // Exclude restaurants with future first_seen_at
     filters.push(`first_seen_at=lte.${new Date().toISOString()}`);
 
+    // Exclude tombstoned (Yelp BUSINESS_UNAVAILABLE) sightings — they will
+    // never resolve and just burn API calls on every refresh.
+    filters.push(`yelp_unavailable_at=is.null`);
+
     // Validate opened_since strictly as ISO 8601 (date or full datetime) to
     // prevent injection of additional PostgREST query parameters via `&`.
     if (openedSince) {
