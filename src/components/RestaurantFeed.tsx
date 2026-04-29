@@ -66,7 +66,13 @@ export function RestaurantFeed() {
       minRating > 0 ? minRating : undefined,
     );
     const mapped = response.restaurants.map(mapToRestaurant);
-    return { results: mapped, total: response.total, hasMore: offset + mapped.length < response.total };
+    // NOTE: server-side filters (price/rating/dietary) drop sightings *after*
+    // paging, so `mapped.length` can be < PAGE_SIZE while there are still more
+    // sightings to walk. Advance the cursor by the page size we requested
+    // (against the unfiltered `total`) — not by the filtered result count —
+    // otherwise we'd loop forever fetching ~1 result at a time.
+    const nextOffset = offset + PAGE_SIZE;
+    return { results: mapped, total: response.total, hasMore: nextOffset < response.total, nextOffset };
   }, [selectedCities, dietaryFilters, priceFilters, minRating, openedSince]);
 
   const fetchInitial = useCallback(async () => {
