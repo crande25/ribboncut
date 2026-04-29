@@ -1,99 +1,39 @@
-# Plan: Cache price & rating + add Settings filters
+# Add "Install App" button to Settings
 
-Same pattern as the dietary cache: store cheap, filterable signal in the DB so we can pre-filter sightings before paying for live Yelp detail calls.
+Make installing PlatePing to the home screen a one-tap action instead of hunting through browser menus.
 
-## 1. Schema
+## What the user will see
 
-New table **`restaurant_metrics`** (separate from `restaurant_categories` to keep cache concerns isolated and TTLs independent):
+A new **"Install App"** section near the top of the Settings page (just under the heading), with a single prominent button:
 
-- `yelp_id text PK`
-- `price_level smallint` — 1–4, mapped from Yelp's `$`/`$$`/`$$$`/`$$$$`. Nullable (Yelp doesn't always return a price).
-- `rating numeric(2,1)` — 0.0–5.0 in 0.5 steps.
-- `review_count integer`
-- `updated_at timestamptz default now()`
-- RLS: public `SELECT`; writes server-only (mirrors `restaurant_categories`).
-- Indexes: `(price_level)`, `(rating)`. Skip composite — Postgres will bitmap-AND when both filters are active and the result set is small (≤ page size).
+- **Android / Chrome / Edge (desktop or mobile):** Tapping the button opens the browser's native install prompt. After install, the button hides itself.
+- **iOS Safari:** No native prompt exists, so the button expands an inline instruction card: *"Tap the Share icon, then 'Add to Home Screen.'"* with a small illustration of the Share icon.
+- **Already installed / unsupported browser:** Section is hidden entirely so it doesn't clutter Settings.
 
-Why `smallint` not text: lets us do `price_level <= 2` for "$$ or cheaper" instead of string matching.
+## How it works (technical)
 
-## 2. Settings UI
+1. **Capture the install prompt** — Add a small hook `useInstallPrompt` that:
+   - Listens for the `beforeinstallprompt` window event, calls `preventDefault()`, and stashes the event.
+   - Listens for `appinstalled` to clear the stashed event and mark installed.
+   - Detects iOS Safari (`/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream`).
+   - Detects standalone mode (`window.matchMedia('(display-mode: standalone)').matches` or `navigator.standalone`) to know if it's already installed.
+   - Returns `{ canInstall, isIOS, isStandalone, promptInstall }`.
 
-Two new sections under "Dietary Requirements":
+2. **New component `InstallAppCard`** in `src/components/InstallAppCard.tsx`:
+   - Returns `null` if `isStandalone` or (no `canInstall` and not `isIOS`).
+   - Otherwise renders the section with the button and (on iOS) the collapsible instructions.
+   - Uses existing styling tokens (`bg-secondary`, `text-primary`, rounded-full button) to match the rest of Settings.
 
-**Price Range** — pill multi-select: `$`, `$$`, `$$$`, `$$$$`. Stored as `useLocalStorage<number[]>("price_filters", [])`. Empty array = no filter.
+3. **Wire into `src/pages/Settings.tsx`** — Render `<InstallAppCard />` right after the page header, before the "Your Locations" section.
 
-**Minimum Rating** — single-select pills: `Any`, `3.5★+`, `4.0★+`, `4.5★+`. Stored as `useLocalStorage<number>("min_rating", 0)`. `0` = no filter.
+## Files touched
 
-Both follow the existing `dietaryOptions` styling so they feel native.
+- `src/hooks/useInstallPrompt.ts` (new)
+- `src/components/InstallAppCard.tsx` (new)
+- `src/pages/Settings.tsx` (one import + one line)
 
-## 3. Wire into get-restaurants
+## Caveats to flag
 
-- `src/lib/api.ts` `getRestaurants()` gains `priceFilters?: number[]` and `minRating?: number` params, passed as query string `prices=1,2` and `min_rating=4.0`.
-- `RestaurantFeed.tsx` reads both from localStorage and forwards them; add to the dependency arrays alongside `dietaryFilters`.
-- Edge function `get-restaurants`:
-  - Batch-fetch `restaurant_metrics` for the page's `yelp_id`s alongside the existing categories/atmosphere fetches.
-  - **Strict pre-filter** (matches the dietary behavior the user picked): if either filter is active, drop sightings with no metrics row OR whose metrics fail the predicate, *before* the Yelp detail loop.
-  - Lazy-write metrics from the live Yelp response when we ended up calling Yelp anyway and the row was missing (mirrors what we already do for categories).
-
-## 4. Harvest update (`discover-new-restaurants`)
-
-Yelp's `/businesses/search` response already returns `price`, `rating`, and `review_count` per business — no extra API calls needed.
-
-- Extend `VerifiedHit` with `priceLevel`, `rating`, `reviewCount` captured at the same point we capture `categoryAliases`.
-- Right after the existing `restaurant_categories` upsert, upsert `restaurant_metrics`. Log `[metrics CITY] cached yelp_id=… price=2 rating=4.3 reviews=128`.
-- Price string → number helper: count `$` chars; `null` if absent.
-
-## 5. On-demand backfill
-
-Extend the existing `backfill-categories` edge function rather than create a parallel one — it already loops recent sightings and calls Yelp details. Rename internally to also populate metrics, but **keep the route name** to avoid breakage. New behavior:
-
-- For each missing-categories row, write **both** `restaurant_categories` and `restaurant_metrics` from the same `/businesses/{id}` response.
-- "Missing" check becomes: row missing in *either* cache table. (Two `IN` queries, union the gaps.)
-- Response JSON gains `metrics_updated` counter alongside the existing `updated`.
-
-Trigger on demand by asking Lovable to "backfill caches for the last 30 days" — same flow as before.
-
-## 6. Logging additions
-
-- Harvest: `[metrics CITY] cached yelp_id=X price=N rating=R reviews=K`
-- get-restaurants pre-filter: `[filter] price/rating dropped N sightings (no-cache=A, predicate-fail=B)`
-- Backfill: `[backfill] cached metrics yelp_id=X price=… rating=…`
-
-## Out of scope (ask if you want them)
-
-- Rating *range* (max rating) — not a typical user need.
-- Showing how many results each filter combo would yield in real time.
-- TTL / refresh job for stale metrics rows (rating drifts over time). Right now metrics get refreshed whenever we re-verify a sighting via harvest or call get-restaurants on a row that *was* cached but stale — we don't refresh stale-but-present rows. Can add a `--force` mode to backfill later.
-
-## Technical Details
-
-**Files touched**
-
-- migration: create `restaurant_metrics` + RLS + indexes
-- `src/pages/Settings.tsx`: two new sections (~40 lines)
-- `src/components/RestaurantFeed.tsx`: read 2 new localStorage keys, pass to API, add to deps
-- `src/lib/api.ts`: extend `getRestaurants` signature + query params
-- `supabase/functions/get-restaurants/index.ts`: parse `prices` / `min_rating`, batch-fetch metrics, strict pre-filter, lazy upsert
-- `supabase/functions/discover-new-restaurants/index.ts`: extend `VerifiedHit`, capture from search hit, upsert after categories
-- `supabase/functions/backfill-categories/index.ts`: also populate metrics; expand "missing" check; add counter
-
-**Price mapping**
-
-```text
-"$"     -> 1
-"$$"    -> 2
-"$$$"   -> 3
-"$$$$"  -> 4
-absent  -> null  (excluded by any active price filter)
-```
-
-**Pre-filter SQL-equivalent (done in code against the in-memory map)**
-
-```text
-keep sighting iff:
-  (no price filter  OR  metrics.price_level IN <selected>)
-  AND
-  (min_rating == 0  OR  metrics.rating >= min_rating)
-  AND
-  metrics row exists when either filter is active   ← strict
-```
+- The native install prompt only fires on the **published URL** (`https://...lovable.app` after publishing or your custom domain), not inside the Lovable editor preview. In the editor, iOS-style instructions will show as a fallback for testing the layout.
+- Chrome only fires `beforeinstallprompt` once per page load and only when its install criteria are met (HTTPS, valid manifest, icons — all already in place).
+- Firefox on Android does not fire `beforeinstallprompt`; users there will see no button (acceptable — small audience, and they can still use the browser menu).

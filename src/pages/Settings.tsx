@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin, DollarSign, Star } from "lucide-react";
 import { CityChecklist } from "@/components/CityChecklist";
+import { InstallAppCard } from "@/components/InstallAppCard";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
 import { useTheme } from "@/hooks/useTheme";
@@ -95,6 +96,8 @@ export default function Settings() {
           </button>
         )}
       </div>
+
+      <InstallAppCard />
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
