@@ -61,33 +61,44 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Optional body: { only_missing?: boolean } — default false (regenerate all)
+    // Optional body: { only_missing?: boolean, yelp_ids?: string[] }
+    //  - yelp_ids: process only this explicit list (skip the sightings query)
+    //  - only_missing: when no yelp_ids given, restrict to sightings without an atmosphere row
     let onlyMissing = false;
+    let explicitIds: string[] = [];
     try {
       const body = await req.json();
       onlyMissing = Boolean(body?.only_missing);
+      if (Array.isArray(body?.yelp_ids)) {
+        explicitIds = body.yelp_ids
+          .map((v: unknown) => String(v || "").trim())
+          .filter((v: string) => v.length > 0);
+      }
     } catch {
       // empty body is fine
     }
 
-    // Fetch all sighting yelp_ids
-    const { data: sightings, error: sErr } = await supabase
-      .from("restaurant_sightings")
-      .select("yelp_id");
-    if (sErr) {
-      return new Response(JSON.stringify({ error: sErr.message }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    let targets: string[] = (sightings || []).map((s: any) => s.yelp_id);
-
-    if (onlyMissing) {
-      const { data: cached } = await supabase
-        .from("atmosphere_cache")
+    let targets: string[];
+    if (explicitIds.length > 0) {
+      targets = explicitIds;
+    } else {
+      const { data: sightings, error: sErr } = await supabase
+        .from("restaurant_sightings")
         .select("yelp_id");
-      const cachedSet = new Set((cached || []).map((c: any) => c.yelp_id));
-      targets = targets.filter((id) => !cachedSet.has(id));
+      if (sErr) {
+        return new Response(JSON.stringify({ error: sErr.message }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      targets = (sightings || []).map((s: any) => s.yelp_id);
+
+      if (onlyMissing) {
+        const { data: cached } = await supabase
+          .from("atmosphere_cache")
+          .select("yelp_id");
+        const cachedSet = new Set((cached || []).map((c: any) => c.yelp_id));
+        targets = targets.filter((id) => !cachedSet.has(id));
+      }
     }
 
     console.log(`[backfill-vibes] processing ${targets.length} restaurants (only_missing=${onlyMissing})`);
