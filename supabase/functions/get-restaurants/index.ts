@@ -179,15 +179,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Cache TTL: skip Yelp detail fetch when cached metrics are fresh (<72h old)
-    // and have a name (i.e., the row was populated, not a stub).
-    const CACHE_TTL_MS = 72 * 60 * 60 * 1000;
-    const now = Date.now();
-    const isCacheFresh = (yelpId: string) => {
+    // Cache usability check: serve from cache when ALL display fields the
+    // card needs are present. No time-based expiry — periodic refresh of
+    // price/rating/categories/vibe is owned by the refresh-metrics job.
+    const isCacheUsable = (yelpId: string) => {
       const m = metricsMap.get(yelpId);
-      if (!m || !m.name || !m.updated_at) return false;
-      const age = now - new Date(m.updated_at).getTime();
-      return age >= 0 && age < CACHE_TTL_MS;
+      if (!m) return false;
+      if (!m.name || !m.image_url) return false;
+      if (m.rating === null || m.price_level === null) return false;
+      const cats = categoryMap.get(yelpId);
+      if (!cats || cats.length === 0) return false;
+      return true;
     };
 
     // Strict pre-filter: drop sightings that don't satisfy active filters before
@@ -327,7 +329,7 @@ Deno.serve(async (req) => {
     let yelpFetches = 0;
     const restaurants = await Promise.all(
       workingSightings.map(async (sighting: any) => {
-        if (isCacheFresh(sighting.yelp_id)) {
+        if (isCacheUsable(sighting.yelp_id)) {
           cacheHits++;
           return buildFromCache(sighting);
         }
