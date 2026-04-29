@@ -3,6 +3,7 @@ import { Sun, Moon, Smartphone, Leaf, Calendar, MapPin, DollarSign, Star } from 
 import { CityChecklist } from "@/components/CityChecklist";
 import { InstallAppCard } from "@/components/InstallAppCard";
 import { PushNotificationsCard } from "@/components/PushNotificationsCard";
+import { ContactUsDialog } from "@/components/ContactUsDialog";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
 import { useTheme } from "@/hooks/useTheme";
@@ -56,6 +57,7 @@ export default function Settings() {
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
   
   const [rawInput, setRawInput] = useState<string>(String(openedWithinValue));
+  const [contactOpen, setContactOpen] = useState(false);
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
 
@@ -305,11 +307,22 @@ export default function Settings() {
         </div>
       </section>
 
+      <div className="pt-2 text-center">
+        <button
+          onClick={() => setContactOpen(true)}
+          className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+        >
+          Contact us
+        </button>
+      </div>
+
       <section className="rounded-lg border border-border bg-secondary/50 p-4">
         <p className="text-xs text-muted-foreground">
           Device ID: <span className="font-mono text-foreground/70">{deviceId.slice(0, 8)}...</span>
         </p>
       </section>
+
+      <ContactUsDialog open={contactOpen} onOpenChange={setContactOpen} />
     </div>
   );
 }

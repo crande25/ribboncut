@@ -7,6 +7,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { ThemeProvider } from "@/hooks/useTheme";
 import Index from "./pages/Index";
 import Settings from "./pages/Settings";
+import Unsubscribe from "./pages/Unsubscribe";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -22,6 +23,7 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/unsubscribe" element={<Unsubscribe />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </div>
