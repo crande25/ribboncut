@@ -18,6 +18,14 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return out;
 }
 
+function detectTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Detroit";
+  } catch {
+    return "America/Detroit";
+  }
+}
+
 function detectIOS(): boolean {
   const ua = navigator.userAgent;
   return /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
@@ -112,6 +120,7 @@ export function usePushNotifications(cities: string[], frequency: string): UsePu
             subscription: { endpoint: json.endpoint, keys: json.keys },
             cities,
             frequency,
+            timezone: detectTimezone(),
           },
         });
       } catch (e) {
@@ -158,6 +167,7 @@ export function usePushNotifications(cities: string[], frequency: string): UsePu
           subscription: { endpoint: json.endpoint, keys: json.keys },
           cities,
           frequency,
+          timezone: detectTimezone(),
         },
       });
       if (error) throw error;
