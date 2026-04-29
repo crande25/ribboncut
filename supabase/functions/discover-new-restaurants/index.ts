@@ -696,10 +696,8 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Log per-city scan rows for every city in the batch
-        for (const [city, r] of batchResults) {
-          await supabase.from("scan_log").insert({ city, new_count: r.inserted });
-        }
+        // (scan_log table removed — no per-city scan logging needed)
+
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`[batch ${batchLabel}] failed:`, msg);
