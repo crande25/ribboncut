@@ -85,11 +85,18 @@ export function RestaurantFeed() {
     }
 
     try {
-      const { results, hasMore: more } = await fetchPage(0);
+      const { results, hasMore: more, nextOffset } = await fetchPage(0);
       if (results.length > 0) {
         setRestaurants(results);
-        setCurrentOffset(results.length);
+        setCurrentOffset(nextOffset);
         setHasMore(more);
+        setUsingMockData(false);
+      } else if (more) {
+        // Page returned no results after server-side filtering, but more
+        // sightings exist — keep paginating from the next offset.
+        setRestaurants([]);
+        setCurrentOffset(nextOffset);
+        setHasMore(true);
         setUsingMockData(false);
       } else {
         setRestaurants([]);
