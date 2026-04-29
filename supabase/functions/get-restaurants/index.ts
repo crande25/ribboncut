@@ -348,6 +348,7 @@ Deno.serve(async (req) => {
       })
     );
 
+    console.log(`[cache] hits=${cacheHits} yelp-fetches=${yelpFetches} (TTL=72h)`);
     const filtered = restaurants.filter(Boolean);
 
     return new Response(
