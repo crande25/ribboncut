@@ -724,8 +724,49 @@ Deno.serve(async (req) => {
       summary,
     }, null, 2));
 
+    // Inline vibe-fill: generate vibes for any sighting that lacks one in
+    // atmosphere_cache. Runs sequentially with a small delay so we don't
+    // hammer Google Places / Lovable AI. One failure does not stop the batch.
+    let vibeFill = { processed: 0, ok: 0, failed: 0 };
+    try {
+      const { data: allSightings } = await supabase
+        .from("restaurant_sightings")
+        .select("yelp_id");
+      const { data: cachedVibes } = await supabase
+        .from("atmosphere_cache")
+        .select("yelp_id");
+      const cachedSet = new Set((cachedVibes || []).map((c: any) => c.yelp_id));
+      const missing = (allSightings || [])
+        .map((s: any) => s.yelp_id as string)
+        .filter((id) => !cachedSet.has(id));
+      console.log(`[discover→vibe] ${missing.length} sightings missing vibes`);
+      vibeFill.processed = missing.length;
+      for (let i = 0; i < missing.length; i++) {
+        try {
+          const r = await fetch(`${SUPABASE_URL}/functions/v1/generate-vibe`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            },
+            body: JSON.stringify({ yelp_id: missing[i] }),
+          });
+          const d = await r.json();
+          if (d?.ok) vibeFill.ok++;
+          else { vibeFill.failed++; console.warn(`[discover→vibe] ${missing[i]} failed: ${d?.reason || r.status}`); }
+        } catch (e) {
+          vibeFill.failed++;
+          console.error(`[discover→vibe] ${missing[i]} threw: ${e instanceof Error ? e.message : e}`);
+        }
+        if (i < missing.length - 1) await new Promise((r) => setTimeout(r, 500));
+      }
+      console.log(`[discover→vibe] DONE ok=${vibeFill.ok} failed=${vibeFill.failed}`);
+    } catch (e) {
+      console.error(`[discover→vibe] phase failed: ${e instanceof Error ? e.message : e}`);
+    }
+
     return new Response(
-      JSON.stringify({ ok: true, total_inserted: totalInserted, elapsed_ms: elapsedMs, summary }),
+      JSON.stringify({ ok: true, total_inserted: totalInserted, elapsed_ms: elapsedMs, summary, vibe_fill: vibeFill }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
