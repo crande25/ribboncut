@@ -86,8 +86,11 @@ export default function Settings() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-bold text-foreground">Settings ⚙️</h1>
+      <div className="flex items-end justify-between gap-3">
+        <div className="space-y-0.5">
+          <h1 className="text-2xl font-bold tracking-tight text-primary">RibbonCut</h1>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Settings</p>
+        </div>
         {hasAnyFilter && (
           <button
             onClick={clearAllFilters}
