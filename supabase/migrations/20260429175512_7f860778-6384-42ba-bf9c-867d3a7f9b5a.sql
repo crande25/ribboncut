@@ -1,0 +1,1 @@
+UPDATE public.restaurant_sightings SET yelp_unavailable_at = now() WHERE yelp_id IN ('qqRyfavBWHwbBdjeI_XoXg','kIcqQ4vhVYWQViiW4HfHnQ','nGtr3_lNGyoXxc8C0xkR2w','Kcc9VS2jNPzrRyHqCkE2Iw') AND yelp_unavailable_at IS NULL;
