@@ -42,7 +42,18 @@ Deno.serve(async (req) => {
     }
 
     const auth = req.headers.get("authorization") || "";
-    if (auth !== `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`) {
+    const providedToken = req.headers.get("x-backfill-token") || "";
+    const BACKFILL_TOKEN = Deno.env.get("BACKFILL_TOKEN") || "";
+
+    const serviceRoleOk =
+      auth.startsWith("Bearer ") &&
+      timingSafeEqual(auth.slice("Bearer ".length), SUPABASE_SERVICE_ROLE_KEY);
+    const tokenOk =
+      BACKFILL_TOKEN.length > 0 &&
+      providedToken.length > 0 &&
+      timingSafeEqual(providedToken, BACKFILL_TOKEN);
+
+    if (!serviceRoleOk && !tokenOk) {
       return new Response(JSON.stringify({ error: "unauthorized" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
