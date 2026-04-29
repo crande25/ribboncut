@@ -1,8 +1,26 @@
-import { useEffect, useRef } from "react";
-import { Bell, Send, Share, Plus } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
+import { Bell, Send, Share, Plus, MoreVertical } from "lucide-react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { cn } from "@/lib/utils";
+
+function detectAndroidNonChromium(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  const isAndroid = /Android/i.test(ua);
+  if (!isAndroid) return false;
+  // Chromium-based browsers that DO support beforeinstallprompt on Android.
+  // Edge, Opera, Brave, Samsung Internet all include their token + "Chrome/..".
+  // Firefox and a few others don't fire the event — give those users manual steps.
+  const isFirefox = /Firefox|FxiOS/i.test(ua);
+  const isOpera = /OPR\//i.test(ua);
+  const isEdge = /EdgA\//i.test(ua);
+  const isSamsung = /SamsungBrowser/i.test(ua);
+  const isChrome = /Chrome\//i.test(ua) && !isEdge && !isOpera && !isSamsung;
+  // Hint shows for anything that isn't Chrome/Edge/Opera/Samsung — primarily Firefox.
+  return isFirefox || (!isChrome && !isEdge && !isOpera && !isSamsung);
+}
 
 const scheduleOptions = [
   { value: "daily", label: "Daily" },
