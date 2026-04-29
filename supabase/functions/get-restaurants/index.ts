@@ -195,6 +195,24 @@ Deno.serve(async (req) => {
     let workingSightings = sightings;
     let droppedNoCache = 0;
     let droppedPredicate = 0;
+    let droppedLodging = 0;
+    // Always exclude lodging-only entries (e.g. hotels with onsite restaurants).
+    // Only filter when we actually have category data cached — entries with no
+    // cached aliases yet are kept and will be evaluated again once enriched.
+    const NON_RESTAURANT_ALIASES = new Set([
+      "hotels", "hotelstravel", "resorts", "bedbreakfast", "guesthouses", "hostels",
+    ]);
+    workingSightings = workingSightings.filter((s: any) => {
+      const aliases = categoryMap.get(s.yelp_id);
+      if (!aliases || aliases.length === 0) return true;
+      const lodgingOnly = aliases.every((a) => NON_RESTAURANT_ALIASES.has(a));
+      if (lodgingOnly) {
+        droppedLodging++;
+        return false;
+      }
+      return true;
+    });
+    if (droppedLodging > 0) console.log(`[filter] dropped ${droppedLodging} lodging-only entries`);
     if (dietaryCategories) {
       const filters = dietaryCategories.split(",").map((c) => c.trim().toLowerCase());
       workingSightings = workingSightings.filter((s: any) => {
