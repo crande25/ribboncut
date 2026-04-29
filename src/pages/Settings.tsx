@@ -276,6 +276,8 @@ export default function Settings() {
         </div>
       </section>
 
+      <PushNotificationsCard />
+
       <section className="space-y-3">
         <div className="flex items-center gap-2">
           <Sun className="h-4 w-4 text-primary" />
