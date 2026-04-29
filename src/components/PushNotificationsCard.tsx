@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Bell, BellOff, Send } from "lucide-react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
@@ -5,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 export function PushNotificationsCard() {
   const [cities] = useLocalStorage<string[]>("selected_cities", []);
-  const [frequency] = useLocalStorage<string>("notification_schedule", "daily");
+  const [frequency] = useLocalStorage<string>("notification_schedule", "");
 
   const {
     supported,
@@ -18,6 +19,15 @@ export function PushNotificationsCard() {
     message,
     busy,
   } = usePushNotifications(cities, frequency);
+
+  const hasFrequency = frequency.length > 0;
+
+  // Auto-disable when the user clears their frequency.
+  useEffect(() => {
+    if (subscribed && !hasFrequency && !busy) {
+      disable();
+    }
+  }, [subscribed, hasFrequency, busy, disable]);
 
   const handleToggle = async () => {
     if (subscribed) await disable();
@@ -58,7 +68,7 @@ export function PushNotificationsCard() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleToggle}
-              disabled={busy}
+              disabled={busy || (!subscribed && !hasFrequency)}
               className={cn(
                 "inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-medium transition-all no-select disabled:opacity-50",
                 subscribed
@@ -90,6 +100,12 @@ export function PushNotificationsCard() {
               </button>
             )}
           </div>
+
+          {!subscribed && !hasFrequency && (
+            <p className="text-xs text-muted-foreground">
+              Pick a Notification Frequency below to enable push.
+            </p>
+          )}
 
           {subscribed && cities.length === 0 && (
             <p className="text-xs text-destructive">

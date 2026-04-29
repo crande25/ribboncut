@@ -59,7 +59,7 @@ export default function Settings() {
   const [, setMinRating] = useLocalStorage<number>("min_rating", 0);
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
-  const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "daily");
+  const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "");
   const [rawInput, setRawInput] = useState<string>(String(openedWithinValue));
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
@@ -284,23 +284,26 @@ export default function Settings() {
           <h2 className="text-sm font-semibold text-foreground">Notification Frequency</h2>
         </div>
         <p className="text-xs text-muted-foreground">
-          How often should we ping you about new restaurants?
+          Pick a cadence, or none to turn notifications off.
         </p>
         <div className="flex gap-2">
-          {scheduleOptions.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setSchedule(opt.value)}
-              className={cn(
-                "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                schedule === opt.value
-                  ? "bg-primary text-primary-foreground shadow-md"
-                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
+          {scheduleOptions.map((opt) => {
+            const isSelected = schedule === opt.value;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => setSchedule(isSelected ? "" : opt.value)}
+                className={cn(
+                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
+                  isSelected
+                    ? "bg-primary text-primary-foreground shadow-md"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
       </section>
 
