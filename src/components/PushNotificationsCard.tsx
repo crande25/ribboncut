@@ -1,8 +1,26 @@
-import { useEffect, useRef } from "react";
-import { Bell, Send, Share, Plus } from "lucide-react";
+import { useEffect, useMemo, useRef } from "react";
+import { Bell, Send, Share, Plus, MoreVertical } from "lucide-react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { useInstallPrompt } from "@/hooks/useInstallPrompt";
 import { cn } from "@/lib/utils";
+
+function detectAndroidNonChromium(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  const isAndroid = /Android/i.test(ua);
+  if (!isAndroid) return false;
+  // Chromium-based browsers that DO support beforeinstallprompt on Android.
+  // Edge, Opera, Brave, Samsung Internet all include their token + "Chrome/..".
+  // Firefox and a few others don't fire the event — give those users manual steps.
+  const isFirefox = /Firefox|FxiOS/i.test(ua);
+  const isOpera = /OPR\//i.test(ua);
+  const isEdge = /EdgA\//i.test(ua);
+  const isSamsung = /SamsungBrowser/i.test(ua);
+  const isChrome = /Chrome\//i.test(ua) && !isEdge && !isOpera && !isSamsung;
+  // Hint shows for anything that isn't Chrome/Edge/Opera/Samsung — primarily Firefox.
+  return isFirefox || (!isChrome && !isEdge && !isOpera && !isSamsung);
+}
 
 const scheduleOptions = [
   { value: "daily", label: "Daily" },
@@ -25,6 +43,12 @@ export function NotificationsCard() {
     message,
     busy,
   } = usePushNotifications(cities, frequency);
+
+  const { canInstall, isStandalone } = useInstallPrompt();
+  const isAndroidNonChromium = useMemo(() => detectAndroidNonChromium(), []);
+  // Show the manual Android hint only if: Android non-Chromium browser, not already installed,
+  // and no native install prompt is available.
+  const showAndroidManualHint = isAndroidNonChromium && !isStandalone && !canInstall;
 
   const hasFrequency = frequency.length > 0;
   const lastFrequencyRef = useRef<string>(frequency);
@@ -90,6 +114,32 @@ export function NotificationsCard() {
             Pick a cadence to get pinged when new restaurants open in your saved locations.
             Select again to turn notifications off.
           </p>
+
+          {showAndroidManualHint && (
+            <div className="rounded-lg border border-border bg-secondary/50 p-4 space-y-3 text-xs text-muted-foreground">
+              <p className="text-foreground font-medium">Install RibbonCut for the best experience 📲</p>
+              <p>
+                Your browser doesn't offer a one-tap install. You can still add
+                RibbonCut to your home screen from the browser menu:
+              </p>
+              <ol className="space-y-1.5 list-decimal list-inside">
+                <li className="flex flex-wrap items-center gap-1.5">
+                  <span>Tap the menu</span>
+                  <MoreVertical className="h-3.5 w-3.5 inline text-primary" />
+                  <span>in your browser's toolbar</span>
+                </li>
+                <li>
+                  Choose <span className="text-foreground font-medium">Install</span> or{" "}
+                  <span className="text-foreground font-medium">Add to Home screen</span>
+                </li>
+                <li>Confirm, then open RibbonCut from your home screen.</li>
+              </ol>
+              <p className="text-[11px] opacity-80">
+                Tip: Chrome, Edge, Opera, and Samsung Internet on Android offer a
+                one-tap install button.
+              </p>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
             {scheduleOptions.map((opt) => {
