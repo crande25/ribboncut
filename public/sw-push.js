@@ -3,7 +3,7 @@
 // the auto-managed precache SW.
 
 self.addEventListener("push", (event) => {
-  let data = { title: "PlatePing", body: "Something new is happening." };
+  let data = { title: "RibbonCut", body: "Something new is happening." };
   try {
     if (event.data) data = { ...data, ...event.data.json() };
   } catch (_) {
@@ -15,7 +15,7 @@ self.addEventListener("push", (event) => {
     body: data.body,
     icon: "/pwa-icon-192.png",
     badge: "/notification-badge.png",
-    tag: data.tag || "plateping",
+    tag: data.tag || "ribboncut",
     data: { url: data.url || "/" },
     renotify: true,
   };
