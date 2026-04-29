@@ -66,7 +66,13 @@ export function RestaurantFeed() {
       minRating > 0 ? minRating : undefined,
     );
     const mapped = response.restaurants.map(mapToRestaurant);
-    return { results: mapped, total: response.total, hasMore: offset + mapped.length < response.total };
+    // NOTE: server-side filters (price/rating/dietary) drop sightings *after*
+    // paging, so `mapped.length` can be < PAGE_SIZE while there are still more
+    // sightings to walk. Advance the cursor by the page size we requested
+    // (against the unfiltered `total`) — not by the filtered result count —
+    // otherwise we'd loop forever fetching ~1 result at a time.
+    const nextOffset = offset + PAGE_SIZE;
+    return { results: mapped, total: response.total, hasMore: nextOffset < response.total, nextOffset };
   }, [selectedCities, dietaryFilters, priceFilters, minRating, openedSince]);
 
   const fetchInitial = useCallback(async () => {
@@ -79,11 +85,18 @@ export function RestaurantFeed() {
     }
 
     try {
-      const { results, hasMore: more } = await fetchPage(0);
+      const { results, hasMore: more, nextOffset } = await fetchPage(0);
       if (results.length > 0) {
         setRestaurants(results);
-        setCurrentOffset(results.length);
+        setCurrentOffset(nextOffset);
         setHasMore(more);
+        setUsingMockData(false);
+      } else if (more) {
+        // Page returned no results after server-side filtering, but more
+        // sightings exist — keep paginating from the next offset.
+        setRestaurants([]);
+        setCurrentOffset(nextOffset);
+        setHasMore(true);
         setUsingMockData(false);
       } else {
         setRestaurants([]);
@@ -114,16 +127,19 @@ export function RestaurantFeed() {
     setLoadingMore(true);
 
     try {
-      const { results, hasMore: more } = await fetchPage(currentOffset);
+      const { results, hasMore: more, nextOffset } = await fetchPage(currentOffset);
       if (results.length > 0) {
         setRestaurants((prev) => {
           const existingIds = new Set(prev.map((r) => r.id));
           const unique = results.filter((r) => !existingIds.has(r.id));
           return [...prev, ...unique];
         });
-        setCurrentOffset((prev) => prev + results.length);
       }
-      setHasMore(more && results.length > 0);
+      // Always advance the cursor by the requested page size — even when this
+      // page returned 0 results after server-side filtering — so we keep
+      // walking until we've covered the unfiltered `total`.
+      setCurrentOffset(nextOffset);
+      setHasMore(more);
     } catch {
       setHasMore(false);
     }
@@ -158,11 +174,16 @@ export function RestaurantFeed() {
     }
 
     try {
-      const { results, hasMore: more } = await fetchPage(0);
+      const { results, hasMore: more, nextOffset } = await fetchPage(0);
       if (results.length > 0) {
         setRestaurants(results);
-        setCurrentOffset(results.length);
+        setCurrentOffset(nextOffset);
         setHasMore(more);
+        setUsingMockData(false);
+      } else if (more) {
+        setRestaurants([]);
+        setCurrentOffset(nextOffset);
+        setHasMore(true);
         setUsingMockData(false);
       } else {
         setRestaurants([]);
