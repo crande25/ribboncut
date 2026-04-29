@@ -91,8 +91,8 @@ Deno.serve(async (req) => {
     let disabled = 0;
 
     for (const sub of subscriptions) {
-      // Skip if no cities targeted
-      if (!sub.cities || sub.cities.length === 0) {
+      // Skip if no cities targeted or no frequency chosen
+      if (!sub.cities || sub.cities.length === 0 || !sub.frequency) {
         skipped++;
         continue;
       }
