@@ -238,6 +238,60 @@ Deno.serve(async (req) => {
       console.log(`[filter] price/rating dropped no-cache=${droppedNoCache} predicate-fail=${droppedPredicate}`);
     }
 
+    // Inline blocking fallback: generate vibes for visible sightings that
+    // lack one. Bounded by concurrency + per-call timeout + total budget so
+    // the Feed never hangs. Anything still missing falls through to the
+    // cuisine-string fallback inside buildFromCache.
+    {
+      const missing = workingSightings
+        .map((s: any) => s.yelp_id as string)
+        .filter((id: string) => !atmosphereMap.has(id));
+      if (missing.length > 0) {
+        const MAX_CONCURRENT = 8;
+        const PER_CALL_TIMEOUT_MS = 6000;
+        const TOTAL_BUDGET_MS = 10000;
+        const startedAt = Date.now();
+        const remainingBudget = () => TOTAL_BUDGET_MS - (Date.now() - startedAt);
+
+        const callOne = async (yelpId: string): Promise<void> => {
+          const budget = remainingBudget();
+          if (budget <= 0) return;
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), Math.min(PER_CALL_TIMEOUT_MS, budget));
+          try {
+            const r = await fetch(`${SUPABASE_URL}/functions/v1/generate-vibe`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              },
+              body: JSON.stringify({ yelp_id: yelpId }),
+              signal: ctrl.signal,
+            });
+            const d = await r.json();
+            if (d?.ok && typeof d.vibe === "string") {
+              atmosphereMap.set(yelpId, d.vibe);
+            }
+          } catch (e) {
+            // Timeout / network — silently skip; cuisine fallback applies.
+          } finally {
+            clearTimeout(timer);
+          }
+        };
+
+        // Concurrency-limited execution
+        let cursor = 0;
+        const workers = Array.from({ length: Math.min(MAX_CONCURRENT, missing.length) }, async () => {
+          while (cursor < missing.length && remainingBudget() > 0) {
+            const idx = cursor++;
+            await callOne(missing[idx]);
+          }
+        });
+        await Promise.all(workers);
+        console.log(`[vibe-fill] generated for ${atmosphereMap.size}/${missing.length} missing in ${Date.now() - startedAt}ms`);
+      }
+    }
+
     // Build a degraded restaurant from cached data only (used when Yelp is exhausted/failing).
     const buildFromCache = (sighting: any) => {
       const m = metricsMap.get(sighting.yelp_id);
