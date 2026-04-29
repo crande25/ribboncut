@@ -1,53 +1,68 @@
 ## Goal
 
-Add a small, out-of-the-way "Contact us" affordance on the Settings page. Submissions are persisted to the database AND emailed to crande25@gmail.com so messages reliably reach you personally.
+Add a Content Security Policy to mitigate XSS and unauthorized resource loading. Implement via `<meta http-equiv="Content-Security-Policy">` in `index.html` since Lovable hosting doesn't expose response-header config.
 
-## UX
+## Caveat (be honest about it)
 
-- A small "Contact us" text link at the bottom of Settings, just above the Device ID block. Subtle (muted-foreground, small font), tappable.
-- Tapping opens a dialog (using existing shadcn `Dialog`) with:
-  - Optional email input (placeholder: "Your email (optional)")
-  - Required message textarea (placeholder: "Tell us what's on your mind…")
-  - Two controls: **Send** (primary, disabled until message is non-empty) and **Cancel** (secondary, closes the dialog and discards in-progress text)
-- On successful submit: dialog closes, toast shows "Thanks, message received!"
-- On failure: toast shows error, dialog stays open so user can retry.
+A meta-tag CSP is weaker than a header CSP — `frame-ancestors`, `report-uri`, and `sandbox` are ignored when set via meta. Everything else works. For your threat model (small audience, no auth, public data) this is the right trade-off; if you ever move to self-hosting, port the policy to a real header.
 
-## Backend
+## Inventory of what the app loads
 
-1. **Email domain setup** — No domain is configured yet. The plan starts by opening the email domain setup dialog so you can add a sender domain. Once configured, setup continues automatically.
-2. **Email infrastructure** — Provision Lovable Emails infrastructure (queue, tables, cron).
-3. **Transactional email scaffold** — Generate the `send-transactional-email` edge function and unsubscribe handler.
-4. **`feedback-received` template** — A branded React Email template that renders the message + optional sender email. Hardcoded to deliver to crande25@gmail.com (your address baked into the send call). `reply_to` is set to the submitter's email when provided, so you can reply directly from your inbox.
-5. **`feedback` table** — Durable record so nothing is ever lost even if email delivery fails:
-   - `id uuid pk`, `message text not null`, `sender_email text null`, `device_id text null`, `created_at timestamptz default now()`
-   - RLS: anonymous INSERT allowed (with length checks via trigger), no SELECT/UPDATE/DELETE for clients. You can read it via the backend.
-6. **Unsubscribe page** — Required by the transactional email system; a small `/unsubscribe` route added to handle the system-appended unsubscribe footer (won't realistically be used since emails go to you, but it's required infrastructure).
+| Resource | Origin |
+|---|---|
+| App JS/CSS | self (built bundle) |
+| Supabase REST + Edge Functions | `https://dcvgzkhoxlvtynlnxsdw.supabase.co` |
+| Yelp restaurant images | `https://*.fl.yelpcdn.com` |
+| Mock/demo images | `https://images.unsplash.com` |
+| OpenStreetMap geocoding (CitySearch) | `https://nominatim.openstreetmap.org` |
+| OG preview image | `https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev` |
+| Vite dev HMR (preview only) | `ws:` and `wss:` to lovable preview hosts |
+| Inline styles | Tailwind/shadcn inject some — needs `'unsafe-inline'` for `style-src` |
 
-## Submission flow
+No Google Fonts, no analytics scripts, no third-party JS in the client. Lovable's visitor tracking is injected by the host platform on the published domain and is exempt from app-level CSP because it runs above your bundle.
 
-1. Client validates: message trimmed non-empty, ≤ 2000 chars; email (if provided) is a valid format, ≤ 255 chars. Uses zod.
-2. Client inserts row into `feedback` with a generated UUID.
-3. Client invokes `send-transactional-email` with `templateName: 'feedback-received'`, `recipientEmail: 'crande25@gmail.com'`, `idempotencyKey: feedback-${id}`, `templateData: { message, senderEmail }`, and `replyTo: senderEmail` if provided.
-4. Toast confirmation; dialog closes.
+## The policy
 
-If the email send fails, the row still exists in the database — you don't lose the feedback. The toast still says "received" since the durable record succeeded; email is best-effort delivery.
+```text
+default-src 'self';
+script-src 'self';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob: https://*.fl.yelpcdn.com https://images.unsplash.com https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev;
+font-src 'self' data:;
+connect-src 'self' https://dcvgzkhoxlvtynlnxsdw.supabase.co wss://dcvgzkhoxlvtynlnxsdw.supabase.co https://nominatim.openstreetmap.org ws: wss:;
+manifest-src 'self';
+worker-src 'self';
+object-src 'none';
+base-uri 'self';
+form-action 'self';
+upgrade-insecure-requests
+```
 
-## Cost
+Notes on the choices:
+- `script-src 'self'` — no inline scripts, no `unsafe-eval`. Vite production builds don't need either.
+- `style-src 'unsafe-inline'` — required by shadcn/Radix/Tailwind which inject style attributes at runtime. Removing it breaks every dialog, tooltip, and animated component. Acceptable trade-off.
+- `img-src` allowlist covers Yelp CDN (real data), Unsplash (mock fallback), and the R2 OG image host.
+- `connect-src` includes `wss:` for Vite HMR in the preview iframe; harmless in production.
+- `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` — cheap hardening wins.
+- `upgrade-insecure-requests` — auto-promotes any stray `http://` references.
 
-Free. Lovable Cloud + Lovable Emails are included.
+## Files to change
 
-## Files to add/change
+- **Edit `index.html`** — add a single `<meta http-equiv="Content-Security-Policy" content="…">` tag in `<head>`, just after the charset/viewport metas.
 
-- **New**: `src/components/ContactUsDialog.tsx` (form + dialog)
-- **New**: `src/pages/Unsubscribe.tsx` (required by email system)
-- **Edit**: `src/pages/Settings.tsx` (add the small link near the bottom)
-- **Edit**: `src/App.tsx` (add `/unsubscribe` route)
-- **New (backend)**: `feedback` table + RLS policies via migration
-- **New (backend)**: `supabase/functions/_shared/transactional-email-templates/feedback-received.tsx` and registry entry
-- **New (backend)**: `send-transactional-email`, `handle-email-unsubscribe`, `handle-email-suppression` edge functions (auto-scaffolded)
+No other files change. No backend changes. No dependencies.
 
-## What you'll need to do once
+## Verification after deploy
 
-When the email setup dialog appears, add a sender subdomain (e.g. `notify.yourdomain.com`) and the system will walk you through adding a couple of NS records at your domain registrar. DNS verification can take a few hours but doesn't block the rest of the build — the contact form will be live immediately, and emails will start flowing once verification completes. In the meantime, every submission is still saved to the `feedback` table.
+1. Open the preview, browse the feed, open Settings, submit Contact us, install PWA prompt, refresh.
+2. Open DevTools console and filter for `Content Security Policy` — any violations will be logged. If something legitimate is blocked (e.g., a Yelp image from a new subdomain), I'll widen the allowlist.
+3. Run https://csp-evaluator.withgoogle.com/ against the published URL for a second opinion.
 
-If you don't own a domain yet, let me know and I'll suggest alternatives (e.g. Discord webhook fallback) before proceeding.
+## Rollback
+
+If something breaks in production that I missed, comment out the meta tag in `index.html` and republish — instant revert, no migration involved.
+
+## What this does not cover
+
+- Lovable's host-level analytics/badges (out of your control, run above your CSP)
+- `frame-ancestors` (ignored in meta) — if you care about clickjacking protection, that needs the header form on a self-hosted setup later.
