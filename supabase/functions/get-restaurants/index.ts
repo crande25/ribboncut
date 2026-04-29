@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
     // Batch-fetch cached metrics + display fields
     const { data: metricsData } = await supabase
       .from("restaurant_metrics")
-      .select("yelp_id, price_level, rating, review_count, name, image_url, address, phone, url, coordinates")
+      .select("yelp_id, price_level, rating, review_count, name, image_url, address, phone, url, coordinates, updated_at")
       .in("yelp_id", yelpIds);
 
     type MetricsRow = {
@@ -161,6 +161,7 @@ Deno.serve(async (req) => {
       phone: string | null;
       url: string | null;
       coordinates: any | null;
+      updated_at: string | null;
     };
     const metricsMap = new Map<string, MetricsRow>();
     for (const row of metricsData || []) {
@@ -174,8 +175,20 @@ Deno.serve(async (req) => {
         phone: row.phone,
         url: row.url,
         coordinates: row.coordinates,
+        updated_at: row.updated_at,
       });
     }
+
+    // Cache TTL: skip Yelp detail fetch when cached metrics are fresh (<72h old)
+    // and have a name (i.e., the row was populated, not a stub).
+    const CACHE_TTL_MS = 72 * 60 * 60 * 1000;
+    const now = Date.now();
+    const isCacheFresh = (yelpId: string) => {
+      const m = metricsMap.get(yelpId);
+      if (!m || !m.name || !m.updated_at) return false;
+      const age = now - new Date(m.updated_at).getTime();
+      return age >= 0 && age < CACHE_TTL_MS;
+    };
 
     // Strict pre-filter: drop sightings that don't satisfy active filters before
     // paying for Yelp detail calls. Mirrors the dietary-filter behavior.
@@ -235,10 +248,18 @@ Deno.serve(async (req) => {
       };
     };
 
-    // Fetch live Yelp details for each (post-filter) sighting via the rotating key pool
+    // Fetch live Yelp details for each (post-filter) sighting via the rotating key pool,
+    // unless the cached metrics row is fresh (<72h) — then serve directly from cache.
+    let cacheHits = 0;
+    let yelpFetches = 0;
     const restaurants = await Promise.all(
       workingSightings.map(async (sighting: any) => {
+        if (isCacheFresh(sighting.yelp_id)) {
+          cacheHits++;
+          return buildFromCache(sighting);
+        }
         try {
+          yelpFetches++;
           const detailRes = await pool.fetch(`${YELP_API_URL}/businesses/${sighting.yelp_id}`);
 
           if (!detailRes.ok) {
@@ -327,6 +348,7 @@ Deno.serve(async (req) => {
       })
     );
 
+    console.log(`[cache] hits=${cacheHits} yelp-fetches=${yelpFetches} (TTL=72h)`);
     const filtered = restaurants.filter(Boolean);
 
     return new Response(
