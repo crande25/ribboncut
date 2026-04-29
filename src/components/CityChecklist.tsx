@@ -50,21 +50,21 @@ export function CityChecklist({ selectedCities, onCitiesChange }: CityChecklistP
               key={city}
               onClick={() => toggleCity(city)}
               className={cn(
-                "flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-medium transition-all no-select text-left",
+                "flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-medium transition-all no-select text-left border border-transparent",
                 isSelected
-                  ? "bg-primary/15 text-primary border border-primary/30"
-                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-transparent"
+                  ? "bg-primary text-primary-foreground shadow-md"
+                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
               )}
             >
               <div
                 className={cn(
                   "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
                   isSelected
-                    ? "bg-primary border-primary"
+                    ? "bg-primary-foreground border-primary-foreground"
                     : "border-muted-foreground/40"
                 )}
               >
-                {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
+                {isSelected && <Check className="h-3 w-3 text-primary" />}
               </div>
               <MapPin className="h-3 w-3 shrink-0" />
               {city}
