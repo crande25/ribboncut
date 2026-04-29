@@ -287,7 +287,6 @@ Deno.serve(async (req) => {
             await callOne(missing[idx]);
           }
         });
-        const beforeCount = atmosphereMap.size - missing.filter((id) => atmosphereMap.has(id)).length;
         await Promise.all(workers);
         const generated = missing.filter((id) => atmosphereMap.has(id)).length;
         console.log(`[vibe-fill] generated ${generated}/${missing.length} missing vibes in ${Date.now() - startedAt}ms (budget=${TOTAL_BUDGET_MS}ms)`);
