@@ -1,0 +1,1 @@
+CREATE POLICY "no direct client access" ON public.api_key_status AS PERMISSIVE FOR ALL TO public USING (false) WITH CHECK (false);
