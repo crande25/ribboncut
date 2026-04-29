@@ -171,7 +171,46 @@ async function fetchGoogleReviews(placeId: string, apiKey: string): Promise<stri
     .slice(0, 5);
 }
 
-/** Fetch up to 3 review snippets from Yelp via the rotating key pool. */
+/** Fetch business metadata (name, address, coords, etc.) from Yelp via rotating keys. */
+async function fetchYelpBusiness(yelpId: string, supabase: any): Promise<any | null> {
+  const { data: statuses } = await supabase
+    .from("api_key_status")
+    .select("key_name, reset_at")
+    .eq("provider", "yelp");
+  const exhaustedSet = new Set<string>();
+  const now = new Date();
+  for (const s of statuses || []) {
+    if (s.reset_at && new Date(s.reset_at) > now) exhaustedSet.add(s.key_name);
+  }
+
+  const candidateKeys: string[] = [];
+  const primary = Deno.env.get("YELP_API_KEY");
+  if (primary && !exhaustedSet.has("YELP_API_KEY")) candidateKeys.push(primary);
+  for (let i = 2; i <= 20; i++) {
+    const name = `YELP_API_KEY_${i}`;
+    const v = Deno.env.get(name);
+    if (v && !exhaustedSet.has(name)) candidateKeys.push(v);
+  }
+
+  for (const key of candidateKeys) {
+    const res = await fetch(`${YELP_REVIEWS_URL}/${yelpId}`, {
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+    });
+    if (res.ok) return await res.json();
+    if (res.status === 404) {
+      console.warn(`[generate-vibe] Yelp business ${yelpId} not found (404)`);
+      return null;
+    }
+    if (res.status !== 429 && res.status !== 401 && res.status !== 403) {
+      const text = await res.text();
+      console.error(`[generate-vibe] Yelp business fetch failed ${res.status}: ${text.slice(0, 200)}`);
+      return null;
+    }
+    // quota / auth → try next key
+  }
+  return null;
+}
+
 async function fetchYelpReviews(yelpId: string, supabase: any): Promise<string[]> {
   // Try each key until we get a 200 or all keys are exhausted.
   const { data: statuses } = await supabase
@@ -356,26 +395,75 @@ Deno.serve(async (req) => {
       : null;
     const cuisine: string = (catRes.data?.titles || []).join(", ");
 
-    if (!metrics || !metrics.name) {
-      console.warn(`[generate-vibe] ${yelpId}: no cached metrics/name; cannot resolve place`);
-      return new Response(JSON.stringify({ ok: false, source: "none", reason: "no metrics" }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    let workingMetrics: MetricsRow | null = metrics;
+
+    // Self-heal: if metrics row is missing or has no name, look up Yelp on demand
+    // and persist a full row so this restaurant works going forward.
+    if (!workingMetrics || !workingMetrics.name) {
+      console.log(`[generate-vibe] ${yelpId}: metrics missing/incomplete, fetching from Yelp`);
+      const biz = await fetchYelpBusiness(yelpId, supabase);
+      if (!biz || !biz.name) {
+        console.warn(`[generate-vibe] ${yelpId}: Yelp lookup returned no usable data`);
+        return new Response(JSON.stringify({ ok: false, source: "none", reason: "no metrics" }), {
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const priceLevel = typeof biz.price === "string" && biz.price.length > 0 ? biz.price.length : null;
+      const displayAddress = Array.isArray(biz.location?.display_address)
+        ? biz.location.display_address.join(", ")
+        : null;
+      const fullRow = {
+        yelp_id: yelpId,
+        price_level: priceLevel,
+        rating: typeof biz.rating === "number" ? biz.rating : null,
+        review_count: typeof biz.review_count === "number" ? biz.review_count : null,
+        name: typeof biz.name === "string" ? biz.name : null,
+        image_url: typeof biz.image_url === "string" ? biz.image_url : null,
+        address: displayAddress,
+        phone: typeof biz.display_phone === "string" ? biz.display_phone : null,
+        url: typeof biz.url === "string" ? biz.url : null,
+        coordinates: biz.coordinates && typeof biz.coordinates === "object" ? biz.coordinates : null,
+        updated_at: new Date().toISOString(),
+      };
+      const { error: upErr } = await supabase
+        .from("restaurant_metrics")
+        .upsert(fullRow, { onConflict: "yelp_id" });
+      if (upErr) {
+        console.error(`[generate-vibe] ${yelpId}: self-heal upsert failed: ${upErr.message}`);
+      } else {
+        console.log(`[generate-vibe] ${yelpId}: self-healed metrics from Yelp (name="${fullRow.name}")`);
+      }
+      workingMetrics = {
+        yelp_id: yelpId,
+        name: fullRow.name,
+        address: fullRow.address,
+        coordinates: fullRow.coordinates as any,
+        google_place_id: null,
+      };
     }
 
     // Step 1: resolve Google place_id (cached) — only if API key configured
     let placeId: string | null = null;
-    if (metrics.google_place_id && metrics.google_place_id !== NOT_FOUND_SENTINEL) {
-      placeId = metrics.google_place_id;
-    } else if (!metrics.google_place_id && GOOGLE_PLACES_API_KEY) {
-      placeId = await resolveGooglePlaceId(metrics, city, GOOGLE_PLACES_API_KEY);
-      // Cache result (or NOT_FOUND so we don't keep retrying)
-      await supabase.from("restaurant_metrics").update({
-        google_place_id: placeId || NOT_FOUND_SENTINEL,
-        updated_at: new Date().toISOString(),
-      }).eq("yelp_id", yelpId);
+    if (workingMetrics.google_place_id && workingMetrics.google_place_id !== NOT_FOUND_SENTINEL) {
+      placeId = workingMetrics.google_place_id;
+    } else if (!workingMetrics.google_place_id && GOOGLE_PLACES_API_KEY) {
+      placeId = await resolveGooglePlaceId(workingMetrics, city, GOOGLE_PLACES_API_KEY);
+      // Cache result (or NOT_FOUND so we don't keep retrying).
+      // UPDATE (not upsert) — by this point we've guaranteed the row exists above,
+      // and an UPDATE avoids any risk of writing a partial row.
+      const { error: updErr } = await supabase
+        .from("restaurant_metrics")
+        .update({
+          google_place_id: placeId || NOT_FOUND_SENTINEL,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("yelp_id", yelpId);
+      if (updErr) {
+        console.error(`[generate-vibe] ${yelpId}: place_id cache write failed: ${updErr.message}`);
+      }
       console.log(`[generate-vibe] ${yelpId}: resolved place_id=${placeId || "NOT_FOUND"}`);
     }
+
 
     // Step 2: fetch reviews (Google primary, Yelp fallback)
     let reviews: string[] = [];
@@ -391,7 +479,7 @@ Deno.serve(async (req) => {
 
     // Step 3: summarize via Lovable AI (works even with zero reviews — model
     // will produce a generic neutral description from cuisine alone).
-    const vibe = await summarizeReviews(metrics.name, cuisine, reviews, LOVABLE_API_KEY);
+    const vibe = await summarizeReviews(workingMetrics.name!, cuisine, reviews, LOVABLE_API_KEY);
     if (!vibe) {
       return new Response(JSON.stringify({ ok: false, source, reason: "ai failed" }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
