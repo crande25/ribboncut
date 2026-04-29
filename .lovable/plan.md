@@ -1,82 +1,49 @@
-# Vibe Generation from Reviews
+## Goal
+Get vibes generated for the 6 failing restaurants and prevent the same failure mode going forward.
 
-Replace the current ungrounded vibe text with AI summaries written from real customer reviews (Google Places primary, Yelp fallback). Casual, friendly, neutral tone — describes look & feel only, no praise or critique.
+## Root cause analysis
 
-## Architecture
+**Cause A — 5 sightings have no `restaurant_metrics` row at all** (`kIcqQ4vhVYWQViiW4HfHnQ`, `nC-t0W3ks-ejzva4NW4OKw`, `nGtr3_lNGyoXxc8C0xkR2w`, `qqRyfavBWHwbBdjeI_XoXg`, `uq3Y2YSqUmeIEJJBUOlIZA`)
+These were inserted as sightings but never had Yelp metadata cached. `generate-vibe` needs `name` + `address` + `coordinates` to do a Google Places text search and bails with `"no metrics"`.
 
-```text
-                                      ┌──────────────────────┐
-                                      │  restaurant_metrics  │
-                                      │   yelp_id (PK)       │
-                                      │   google_place_id ★  │  ← new column
-                                      │   ... existing cols  │
-                                      └──────────┬───────────┘
-                                                 │
-   ┌─────────────────────┐    no place_id?   ┌───▼────────────┐  reviews   ┌──────────────┐
-   │  vibe missing for   │────────────────►  │ Google Places  │ ─────────► │  Lovable AI  │
-   │  this yelp_id?      │                   │   resolver     │            │  summarize   │
-   └─────────────────────┘                   └────────────────┘            └──────┬───────┘
-                                                                                  │
-                                                                                  ▼
-                                                                       atmosphere_cache
-```
+**Cause B — 1 sighting has a metrics row with NULL name/address** (`Kcc9VS2jNPzrRyHqCkE2Iw`)
+`generate-vibe` itself caches `google_place_id` on `restaurant_metrics` via an **`UPDATE ... WHERE yelp_id = ?`** at `generate-vibe/index.ts:373`. If no row exists yet, the UPDATE silently affects 0 rows. But Postgres treats it differently when combined with how Supabase `.update()` handles missing rows — and more importantly, an earlier code path (likely a prior version, or a partial insert from `discover-new-restaurants` failing mid-batch) created a bare row containing only `yelp_id`. Either way, the row exists with NULL name/address, so the next `generate-vibe` call can't proceed.
 
-★ = new nullable column. Stores the resolved Google `place_id`, or sentinel `'NOT_FOUND'` so we don't keep retrying.
+**Stale vibes** — 2 of the 6 (`nC-t0W3ks…`, `uq3Y2YSqUmeIEJJBUOlIZA`) still show pre-backfill non-grounded summaries because the backfill failed mid-write for them.
 
-## Components
+## What to build (4 changes)
 
-**1. Schema change** — add `google_place_id TEXT NULL` to `restaurant_metrics`. Cached forever once resolved.
+### 1. Harden `generate-vibe` — fetch Yelp metadata on demand when missing
+Before bailing with `"no metrics"`, attempt a Yelp `/businesses/{yelp_id}` fetch. If it returns name+address+coordinates, upsert them into `restaurant_metrics` and continue. This makes the pipeline self-healing for future sightings that bypass the normal cache path.
 
-**2. New edge function: `generate-vibe`** (single-restaurant worker)
-   - Input: `{ yelp_id }`
-   - Reads cached metrics (name, address, coords, place_id)
-   - If no `google_place_id` → resolve via Google Places `searchText` and verify with fuzzy name + city + (if coords present) ≤150m distance check. Cache result or `'NOT_FOUND'`.
-   - Fetch reviews — Google Places `place/details` (up to 5 reviews); fall back to Yelp `/v3/businesses/{id}/reviews` (3 short snippets) if Google failed.
-   - Call Lovable AI (`google/gemini-3-flash-preview`) using tool-calling for structured output: `{ vibe: string }`.
-   - Upsert into `atmosphere_cache` (overwriting any prior value).
-   - Returns `{ ok, vibe?, source: "google" | "yelp" | "none" }`.
+If Yelp also returns 404/no data, *then* return `"no metrics"`. New telemetry: log `source: yelp_lookup` when this path triggers.
 
-**3. Backfill (run once)** — admin-only edge function `backfill-vibes`. Iterates all `restaurant_sightings.yelp_id`, sequentially throttled, calls `generate-vibe` for each. Overwrites all 47 existing summaries with review-grounded ones. I'll trigger this once and report results.
+### 2. Fix the partial-row bug in `generate-vibe`'s place_id cache write
+Change the `google_place_id` update at line 373 from `UPDATE` to a real `UPSERT` keyed on `yelp_id`, but **only set google_place_id + updated_at** in the upsert (don't blank out other columns). Use `.upsert(..., { onConflict: "yelp_id", ignoreDuplicates: false })` with explicit column list — or better, switch to a `.update()` after we've already ensured a full row exists via #1.
 
-**4. Daily auto-fill (inline, after discovery)** — at the very end of `discover-new-restaurants`, run a "fill missing vibes" pass: query sightings whose `yelp_id` is missing from `atmosphere_cache`, call `generate-vibe` for each. Throttled; fault-tolerant (one failure doesn't stop the batch).
+This guarantees we never create a bare-bones row from `generate-vibe`.
 
-**5. Inline blocking fallback in `get-restaurants`** — after batch-loading sightings + atmosphere cache, if any visible restaurant on the page lacks a vibe, call `generate-vibe` for those before returning. Bounded:
-   - Max 8 concurrent
-   - Per-call timeout ~6s
-   - Overall budget ~10s; anything still missing falls back to the cuisine string for that card so the Feed never hangs
+### 3. One-time data fix for the 6 affected restaurants
+After deploying #1 and #2:
+- Delete the stale `atmosphere_cache` rows for `nC-t0W3ks-ejzva4NW4OKw` and `uq3Y2YSqUmeIEJJBUOlIZA` so they don't show old summaries.
+- Delete the bare metrics row for `Kcc9VS2jNPzrRyHqCkE2Iw` (so the new self-healing path can repopulate it cleanly).
+- Re-run `backfill-vibes` (one-shot token again, then revoke) targeting only those 6.
 
-## Style prompt (sent to Lovable AI)
+### 4. Make `backfill-vibes` accept an explicit list of yelp_ids
+Add optional body field `{ yelp_ids: string[] }` so we don't have to regenerate all 47 again. If provided, process only those; otherwise current behavior.
 
-> Write a 1–2 sentence vibe description (max ~160 characters) for this restaurant based on the customer reviews below. Casual, friendly tone. Describe the look and feel — decor, crowd, energy, lighting, layout, noise level. Do NOT praise or criticize the food, service, or value. Stay neutral and observational. Output via the `set_vibe` tool.
+## Files changed
+- `supabase/functions/generate-vibe/index.ts` — add Yelp metadata fallback, fix place_id cache write
+- `supabase/functions/backfill-vibes/index.ts` — accept `yelp_ids` array
+- Data ops via `supabase--insert` tool: delete 2 stale atmosphere rows + 1 bare metrics row
+- One-shot run: re-add `BACKFILL_TOKEN`, run targeted backfill, delete token
 
-Tool-calling schema enforces a single `vibe` string field.
+## Out of scope
+- Investigating *why* `Kcc9VS2jNPzrRyHqCkE2Iw` ended up with a bare metrics row historically (could be a deleted-then-resighted business, or a prior buggy code path that's already been removed). #2 prevents recurrence regardless.
+- Changing the `discover-new-restaurants` upsert at line 678 — it already writes a full row.
 
-## Failure handling
-
-- **Google Place not found** → mark `'NOT_FOUND'`, fall through to Yelp reviews
-- **Both review sources empty** → skip this run, leave atmosphere_cache empty (will retry tomorrow)
-- **Lovable AI 429 / 402** → log + skip (don't fail the batch)
-- **Yelp keys exhausted** → still attempt Google only
-
-## Files affected
-
-- `supabase/migrations/...` — add `google_place_id` column (migration tool)
-- `supabase/functions/generate-vibe/index.ts` — new
-- `supabase/functions/backfill-vibes/index.ts` — new (one-shot, admin-only)
-- `supabase/functions/discover-new-restaurants/index.ts` — append vibe-fill phase at end
-- `supabase/functions/get-restaurants/index.ts` — inline blocking fallback for missing vibes
-
-## Out of scope (not changing)
-
-- The `atmosphere_cache` table schema itself (still `yelp_id` + `atmosphere_summary` + `created_at`)
-- The Feed UI / `RestaurantCard` rendering
-- Yelp key pool / discovery filtering / hotel exclusion
-- Vibe regeneration / refresh — once written, a vibe stays cached indefinitely (we can add a refresh policy later if reviews drift)
-
-## Sequence of execution
-
-1. Migration: add column
-2. Build & deploy `generate-vibe`
-3. Build & deploy `backfill-vibes`, run it once, report results (47 restaurants)
-4. Wire vibe-fill phase into `discover-new-restaurants`, deploy
-5. Wire blocking fallback into `get-restaurants`, deploy
+## Verification
+After deploy + targeted backfill, confirm via SQL:
+- `atmosphere_cache` count = sightings count = 47
+- All 6 target yelp_ids have a fresh `atmosphere_cache` row with `created_at` after deploy
+- All 6 have a non-null `name` in `restaurant_metrics`
