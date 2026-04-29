@@ -191,27 +191,6 @@ export type Database = {
         }
         Relationships: []
       }
-      scan_log: {
-        Row: {
-          city: string
-          id: string
-          new_count: number
-          scanned_at: string
-        }
-        Insert: {
-          city: string
-          id?: string
-          new_count?: number
-          scanned_at?: string
-        }
-        Update: {
-          city?: string
-          id?: string
-          new_count?: number
-          scanned_at?: string
-        }
-        Relationships: []
-      }
     }
     Views: {
       [_ in never]: never
