@@ -597,6 +597,7 @@ Deno.serve(async (req) => {
     }> = [];
 
     let totalInserted = 0;
+    const insertedYelpIds = new Set<string>();
 
     // Process cities in batches — one Gemini grounded call per batch (cuts daily
     // grounded-call usage to fit free-tier 20/day cap).
