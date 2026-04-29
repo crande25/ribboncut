@@ -125,18 +125,35 @@ Deno.serve(async (req) => {
       categoryMap.set(row.yelp_id, row.aliases || []);
     }
 
-    // Batch-fetch cached metrics (price, rating)
+    // Batch-fetch cached metrics + display fields
     const { data: metricsData } = await supabase
       .from("restaurant_metrics")
-      .select("yelp_id, price_level, rating, review_count")
+      .select("yelp_id, price_level, rating, review_count, name, image_url, address, phone, url, coordinates")
       .in("yelp_id", yelpIds);
 
-    const metricsMap = new Map<string, { price_level: number | null; rating: number | null; review_count: number | null }>();
+    type MetricsRow = {
+      price_level: number | null;
+      rating: number | null;
+      review_count: number | null;
+      name: string | null;
+      image_url: string | null;
+      address: string | null;
+      phone: string | null;
+      url: string | null;
+      coordinates: any | null;
+    };
+    const metricsMap = new Map<string, MetricsRow>();
     for (const row of metricsData || []) {
       metricsMap.set(row.yelp_id, {
         price_level: row.price_level,
         rating: row.rating !== null ? Number(row.rating) : null,
         review_count: row.review_count,
+        name: row.name,
+        image_url: row.image_url,
+        address: row.address,
+        phone: row.phone,
+        url: row.url,
+        coordinates: row.coordinates,
       });
     }
 
