@@ -105,7 +105,8 @@ export function usePushNotifications(cities: string[], frequency: string): UsePu
   // When cities/frequency change while subscribed, push the update server-side.
   useEffect(() => {
     if (!subscribed || !deviceId) return;
-    const sig = JSON.stringify({ cities, frequency });
+    const tz = detectTimezone();
+    const sig = JSON.stringify({ cities, frequency, tz });
     if (sig === lastSyncRef.current) return;
     lastSyncRef.current = sig;
     (async () => {
