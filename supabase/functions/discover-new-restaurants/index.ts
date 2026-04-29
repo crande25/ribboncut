@@ -345,6 +345,11 @@ interface VerifiedHit {
   priceLevel: number | null;
   rating: number | null;
   reviewCount: number | null;
+  imageUrl: string | null;
+  address: string | null;
+  phone: string | null;
+  url: string | null;
+  coordinates: { latitude?: number; longitude?: number } | null;
 }
 
 interface VerifyResult {
@@ -397,6 +402,9 @@ async function verifyOnYelp(
       rejections.push(`city-mismatch("${b.name}" → ${yelpCity ?? "?"})`);
       continue;
     }
+    const displayAddress = Array.isArray(b?.location?.display_address)
+      ? b.location.display_address.join(", ")
+      : null;
     return {
       hit: {
         yelp_id: b.id,
@@ -408,6 +416,11 @@ async function verifyOnYelp(
         priceLevel: typeof b.price === "string" && b.price.length > 0 ? b.price.length : null,
         rating: typeof b.rating === "number" ? b.rating : null,
         reviewCount: typeof b.review_count === "number" ? b.review_count : null,
+        imageUrl: typeof b.image_url === "string" ? b.image_url : null,
+        address: displayAddress,
+        phone: typeof b.display_phone === "string" ? b.display_phone : null,
+        url: typeof b.url === "string" ? b.url : null,
+        coordinates: b.coordinates && typeof b.coordinates === "object" ? b.coordinates : null,
       },
       reason: "match",
       yelpResultCount: businesses.length,
@@ -657,7 +670,7 @@ Deno.serve(async (req) => {
             console.log(`[cache ${cand.city}] categories cached yelp_id=${hit.yelp_id} aliases=[${hit.categoryAliases.join(",")}]`);
           }
 
-          // Cache metrics (price, rating, review count)
+          // Cache metrics + display fields (price, rating, review count, name, image, address, phone, url, coords)
           const { error: metErr } = await supabase
             .from("restaurant_metrics")
             .upsert(
@@ -666,6 +679,12 @@ Deno.serve(async (req) => {
                 price_level: hit.priceLevel,
                 rating: hit.rating,
                 review_count: hit.reviewCount,
+                name: hit.yelp_name,
+                image_url: hit.imageUrl,
+                address: hit.address,
+                phone: hit.phone,
+                url: hit.url,
+                coordinates: hit.coordinates,
                 updated_at: new Date().toISOString(),
               },
               { onConflict: "yelp_id" },

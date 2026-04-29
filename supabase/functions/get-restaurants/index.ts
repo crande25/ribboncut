@@ -125,18 +125,35 @@ Deno.serve(async (req) => {
       categoryMap.set(row.yelp_id, row.aliases || []);
     }
 
-    // Batch-fetch cached metrics (price, rating)
+    // Batch-fetch cached metrics + display fields
     const { data: metricsData } = await supabase
       .from("restaurant_metrics")
-      .select("yelp_id, price_level, rating, review_count")
+      .select("yelp_id, price_level, rating, review_count, name, image_url, address, phone, url, coordinates")
       .in("yelp_id", yelpIds);
 
-    const metricsMap = new Map<string, { price_level: number | null; rating: number | null; review_count: number | null }>();
+    type MetricsRow = {
+      price_level: number | null;
+      rating: number | null;
+      review_count: number | null;
+      name: string | null;
+      image_url: string | null;
+      address: string | null;
+      phone: string | null;
+      url: string | null;
+      coordinates: any | null;
+    };
+    const metricsMap = new Map<string, MetricsRow>();
     for (const row of metricsData || []) {
       metricsMap.set(row.yelp_id, {
         price_level: row.price_level,
         rating: row.rating !== null ? Number(row.rating) : null,
         review_count: row.review_count,
+        name: row.name,
+        image_url: row.image_url,
+        address: row.address,
+        phone: row.phone,
+        url: row.url,
+        coordinates: row.coordinates,
       });
     }
 
@@ -170,6 +187,34 @@ Deno.serve(async (req) => {
       console.log(`[filter] price/rating dropped no-cache=${droppedNoCache} predicate-fail=${droppedPredicate}`);
     }
 
+    // Build a degraded restaurant from cached data only (used when Yelp is exhausted/failing).
+    const buildFromCache = (sighting: any) => {
+      const m = metricsMap.get(sighting.yelp_id);
+      if (!m || !m.name) return null;
+      const titles = (categoryMap.get(sighting.yelp_id) || []) as string[];
+      const cuisine = titles.join(", ");
+      const cachedAtmosphere = atmosphereMap.get(sighting.yelp_id);
+      const priceRange = m.price_level ? "$".repeat(m.price_level) : "$";
+      return {
+        id: sighting.yelp_id,
+        name: m.name,
+        city: sighting.city,
+        cuisine,
+        priceRange,
+        imageUrl: m.image_url || "",
+        rating: m.rating,
+        reviewCount: m.review_count,
+        address: m.address || "",
+        phone: m.phone || "",
+        url: m.url || "",
+        photos: m.image_url ? [m.image_url] : [],
+        hours: [],
+        coordinates: m.coordinates || undefined,
+        firstSeenAt: sighting.first_seen_at,
+        atmosphereSummary: cachedAtmosphere || cuisine || "",
+      };
+    };
+
     // Fetch live Yelp details for each (post-filter) sighting via the rotating key pool
     const restaurants = await Promise.all(
       workingSightings.map(async (sighting: any) => {
@@ -178,11 +223,11 @@ Deno.serve(async (req) => {
 
           if (!detailRes.ok) {
             if (detailRes.exhaustedAllKeys) {
-              console.error(`Yelp ALL KEYS EXHAUSTED while fetching ${sighting.yelp_id}`);
+              console.error(`Yelp ALL KEYS EXHAUSTED while fetching ${sighting.yelp_id} — using cache fallback`);
             } else {
-              console.error(`Yelp detail error for ${sighting.yelp_id}: status=${detailRes.status} key=${detailRes.keyName}`);
+              console.error(`Yelp detail error for ${sighting.yelp_id}: status=${detailRes.status} key=${detailRes.keyName} — using cache fallback`);
             }
-            return null;
+            return buildFromCache(sighting);
           }
 
           const biz = detailRes.body;
@@ -197,14 +242,18 @@ Deno.serve(async (req) => {
                 { yelp_id: sighting.yelp_id, aliases, titles, updated_at: new Date().toISOString() },
                 { onConflict: "yelp_id" },
               )
-              .then(({ error }) => {
+              .then(({ error }: { error: any }) => {
                 if (error) console.error(`[cache] lazy upsert failed ${sighting.yelp_id}: ${error.message}`);
               });
           }
 
-          // Lazy-write metrics cache when missing
-          if (!metricsMap.has(sighting.yelp_id)) {
+          // Lazy-write metrics + display fields when missing or incomplete (no cached name)
+          const existingMetrics = metricsMap.get(sighting.yelp_id);
+          if (!existingMetrics || !existingMetrics.name) {
             const priceLevel = typeof biz.price === "string" && biz.price.length > 0 ? biz.price.length : null;
+            const displayAddress = Array.isArray(biz.location?.display_address)
+              ? biz.location.display_address.join(", ")
+              : null;
             supabase
               .from("restaurant_metrics")
               .upsert(
@@ -213,11 +262,17 @@ Deno.serve(async (req) => {
                   price_level: priceLevel,
                   rating: typeof biz.rating === "number" ? biz.rating : null,
                   review_count: typeof biz.review_count === "number" ? biz.review_count : null,
+                  name: typeof biz.name === "string" ? biz.name : null,
+                  image_url: typeof biz.image_url === "string" ? biz.image_url : null,
+                  address: displayAddress,
+                  phone: typeof biz.display_phone === "string" ? biz.display_phone : null,
+                  url: typeof biz.url === "string" ? biz.url : null,
+                  coordinates: biz.coordinates && typeof biz.coordinates === "object" ? biz.coordinates : null,
                   updated_at: new Date().toISOString(),
                 },
                 { onConflict: "yelp_id" },
               )
-              .then(({ error }) => {
+              .then(({ error }: { error: any }) => {
                 if (error) console.error(`[cache] lazy metrics upsert failed ${sighting.yelp_id}: ${error.message}`);
               });
           }
@@ -247,7 +302,7 @@ Deno.serve(async (req) => {
           };
         } catch (err) {
           console.error(`Error fetching ${sighting.yelp_id}:`, err);
-          return null;
+          return buildFromCache(sighting);
         }
       })
     );
