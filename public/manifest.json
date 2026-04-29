@@ -4,8 +4,8 @@
   "description": "Find out what just opened near you",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0a0f",
-  "theme_color": "#e8822a",
+  "background_color": "#f4504c",
+  "theme_color": "#f4504c",
   "orientation": "portrait",
   "icons": [
     {
