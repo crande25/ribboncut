@@ -29,24 +29,26 @@ interface Subscription {
   preferred_hour: number;
 }
 
-// Returns the current hour (0-23) at the given IANA timezone.
-function localHourIn(tz: string): number {
-  try {
-    const fmt = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      hour: "numeric",
-      hour12: false,
-    });
-    return parseInt(fmt.format(new Date()), 10);
-  } catch {
-    // Fallback to ET if the stored timezone is somehow invalid.
-    const fmt = new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/Detroit",
-      hour: "numeric",
-      hour12: false,
-    });
-    return parseInt(fmt.format(new Date()), 10);
-  }
+// Returns { hour, minute } at the given IANA timezone.
+function localTimeIn(tz: string): { hour: number; minute: number } {
+  const safeTz = (() => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: tz });
+      return tz;
+    } catch {
+      return "America/Detroit";
+    }
+  })();
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: safeTz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(new Date());
+  const hour = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
+  const minute = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
+  return { hour, minute };
 }
 
 function buildBody(count: number, cities: string[]): { title: string; body: string } {
@@ -119,11 +121,12 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Local-time-of-day gate: only deliver during the device's preferred hour.
-      // Cron runs hourly, so this naturally lands the push within that local hour.
+      // Local-time-of-day gate: deliver only during the 10:30 AM half-hour
+      // (or whatever preferred_hour is set to, at :30 past). The cron runs
+      // every 30 minutes, so the matching slot fires once per day per device.
       const targetHour = sub.preferred_hour ?? 10;
-      const currentLocalHour = localHourIn(sub.timezone || "America/Detroit");
-      if (currentLocalHour !== targetHour) {
+      const { hour: lh, minute: lm } = localTimeIn(sub.timezone || "America/Detroit");
+      if (lh !== targetHour || lm < 30) {
         skipped++;
         continue;
       }
