@@ -63,12 +63,32 @@ Deno.serve(async (req) => {
     // Exclude restaurants with future first_seen_at
     filters.push(`first_seen_at=lte.${new Date().toISOString()}`);
 
+    // Validate opened_since strictly as ISO 8601 (date or full datetime) to
+    // prevent injection of additional PostgREST query parameters via `&`.
     if (openedSince) {
-      filters.push(`first_seen_at=gte.${openedSince}`);
+      const isoRe = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+      if (!isoRe.test(openedSince) || Number.isNaN(Date.parse(openedSince))) {
+        return new Response(
+          JSON.stringify({ error: "Invalid opened_since (expected ISO 8601)" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      filters.push(`first_seen_at=gte.${encodeURIComponent(openedSince)}`);
     }
     if (citiesParam) {
-      const cities = citiesParam.split("|").map((c) => c.trim());
-      filters.push(`city=in.(${cities.map((c) => `"${c}"`).join(",")})`);
+      // URL-encode each city token so embedded quotes/&/= cannot break out of
+      // the in.(...) filter or inject new PostgREST parameters.
+      const cities = citiesParam
+        .split("|")
+        .map((c) => c.trim())
+        .filter((c) => c.length > 0 && c.length <= 100)
+        .slice(0, 50);
+      if (cities.length > 0) {
+        const encoded = cities
+          .map((c) => `"${encodeURIComponent(c).replace(/"/g, "%22")}"`)
+          .join(",");
+        filters.push(`city=in.(${encoded})`);
+      }
     }
 
     const dbUrl = `${SUPABASE_URL}/rest/v1/restaurant_sightings?${filters.join("&")}`;

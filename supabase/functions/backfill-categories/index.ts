@@ -124,21 +124,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Service-role-only gate (mirror of discover-new-restaurants)
+    // Service-role-only gate. Compare the bearer token to the exact service
+    // role key string. Do NOT decode JWT payloads without verifying the
+    // signature — unsigned tokens with `role=service_role` could be forged.
     const authHeader = req.headers.get("Authorization") ?? "";
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    let authorized = false;
-    if (token && token === SUPABASE_SERVICE_ROLE_KEY) {
-      authorized = true;
-    } else if (token) {
-      try {
-        const parts = token.split(".");
-        if (parts.length === 3) {
-          const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-          if (payload?.role === "service_role") authorized = true;
-        }
-      } catch (_) { /* ignore */ }
-    }
+    const authorized = token.length > 0 && token === SUPABASE_SERVICE_ROLE_KEY;
     if (!authorized) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
