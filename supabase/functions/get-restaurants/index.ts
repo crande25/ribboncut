@@ -179,16 +179,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Cache usability check: serve from cache when the display fields the
-    // card needs are present. NULL price_level / rating are valid cached
-    // states (Yelp often omits price for small businesses) — do NOT treat
-    // them as cache misses or we'd hit Yelp on every refresh forever.
-    // Periodic refresh of price/rating/categories/vibe is owned by the
-    // refresh-metrics job.
+    // Cache usability check: serve from cache when ALL display fields the
+    // card needs are present. No time-based expiry — periodic refresh of
+    // price/rating/categories/vibe is owned by the refresh-metrics job.
     const isCacheUsable = (yelpId: string) => {
       const m = metricsMap.get(yelpId);
       if (!m) return false;
       if (!m.name || !m.image_url) return false;
+      if (m.rating === null || m.price_level === null) return false;
       const cats = categoryMap.get(yelpId);
       if (!cats || cats.length === 0) return false;
       return true;
