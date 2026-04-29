@@ -296,18 +296,21 @@ export type Database = {
           first_seen_at: string
           is_new_discovery: boolean
           yelp_id: string
+          yelp_unavailable_at: string | null
         }
         Insert: {
           city: string
           first_seen_at?: string
           is_new_discovery?: boolean
           yelp_id: string
+          yelp_unavailable_at?: string | null
         }
         Update: {
           city?: string
           first_seen_at?: string
           is_new_discovery?: boolean
           yelp_id?: string
+          yelp_unavailable_at?: string | null
         }
         Relationships: []
       }

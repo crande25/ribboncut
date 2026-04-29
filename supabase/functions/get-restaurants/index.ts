@@ -63,6 +63,10 @@ Deno.serve(async (req) => {
     // Exclude restaurants with future first_seen_at
     filters.push(`first_seen_at=lte.${new Date().toISOString()}`);
 
+    // Exclude tombstoned (Yelp BUSINESS_UNAVAILABLE) sightings — they will
+    // never resolve and just burn API calls on every refresh.
+    filters.push(`yelp_unavailable_at=is.null`);
+
     // Validate opened_since strictly as ISO 8601 (date or full datetime) to
     // prevent injection of additional PostgREST query parameters via `&`.
     if (openedSince) {
@@ -344,6 +348,22 @@ Deno.serve(async (req) => {
               console.error(`Yelp ALL KEYS EXHAUSTED while fetching ${sighting.yelp_id} — using cache fallback`);
             } else {
               console.error(`Yelp detail error for ${sighting.yelp_id}: status=${detailRes.status} key=${detailRes.keyName} — using cache fallback`);
+            }
+            // Tombstone permanently-unavailable businesses so we stop
+            // re-fetching them on every refresh. Yelp returns 403 with
+            // BUSINESS_UNAVAILABLE for de-listed / no-review entries.
+            const bodyStr = typeof detailRes.body === "string"
+              ? detailRes.body
+              : JSON.stringify(detailRes.body || {});
+            if (detailRes.status === 403 && bodyStr.includes("BUSINESS_UNAVAILABLE")) {
+              supabase
+                .from("restaurant_sightings")
+                .update({ yelp_unavailable_at: new Date().toISOString() })
+                .eq("yelp_id", sighting.yelp_id)
+                .then(({ error }: { error: any }) => {
+                  if (error) console.error(`[tombstone] failed for ${sighting.yelp_id}: ${error.message}`);
+                  else console.log(`[tombstone] marked ${sighting.yelp_id} unavailable`);
+                });
             }
             return buildFromCache(sighting);
           }
