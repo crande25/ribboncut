@@ -88,24 +88,42 @@ export type Database = {
       }
       restaurant_metrics: {
         Row: {
+          address: string | null
+          coordinates: Json | null
+          image_url: string | null
+          name: string | null
+          phone: string | null
           price_level: number | null
           rating: number | null
           review_count: number | null
           updated_at: string
+          url: string | null
           yelp_id: string
         }
         Insert: {
+          address?: string | null
+          coordinates?: Json | null
+          image_url?: string | null
+          name?: string | null
+          phone?: string | null
           price_level?: number | null
           rating?: number | null
           review_count?: number | null
           updated_at?: string
+          url?: string | null
           yelp_id: string
         }
         Update: {
+          address?: string | null
+          coordinates?: Json | null
+          image_url?: string | null
+          name?: string | null
+          phone?: string | null
           price_level?: number | null
           rating?: number | null
           review_count?: number | null
           updated_at?: string
+          url?: string | null
           yelp_id?: string
         }
         Relationships: []
