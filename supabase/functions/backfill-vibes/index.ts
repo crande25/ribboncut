@@ -4,7 +4,9 @@
 // Overwrites any existing atmosphere_cache row. Throttled to be polite to
 // Google Places, Yelp, and Lovable AI.
 //
-// Auth: requires the SUPABASE_SERVICE_ROLE_KEY in the Authorization header.
+// Auth: accepts EITHER
+//   - Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>, OR
+//   - x-backfill-token: <BACKFILL_TOKEN>  (one-shot token, deletable after use)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
