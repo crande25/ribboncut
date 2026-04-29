@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
     // Batch-fetch cached metrics + display fields
     const { data: metricsData } = await supabase
       .from("restaurant_metrics")
-      .select("yelp_id, price_level, rating, review_count, name, image_url, address, phone, url, coordinates")
+      .select("yelp_id, price_level, rating, review_count, name, image_url, address, phone, url, coordinates, updated_at")
       .in("yelp_id", yelpIds);
 
     type MetricsRow = {
@@ -161,6 +161,7 @@ Deno.serve(async (req) => {
       phone: string | null;
       url: string | null;
       coordinates: any | null;
+      updated_at: string | null;
     };
     const metricsMap = new Map<string, MetricsRow>();
     for (const row of metricsData || []) {
@@ -174,8 +175,20 @@ Deno.serve(async (req) => {
         phone: row.phone,
         url: row.url,
         coordinates: row.coordinates,
+        updated_at: row.updated_at,
       });
     }
+
+    // Cache TTL: skip Yelp detail fetch when cached metrics are fresh (<72h old)
+    // and have a name (i.e., the row was populated, not a stub).
+    const CACHE_TTL_MS = 72 * 60 * 60 * 1000;
+    const now = Date.now();
+    const isCacheFresh = (yelpId: string) => {
+      const m = metricsMap.get(yelpId);
+      if (!m || !m.name || !m.updated_at) return false;
+      const age = now - new Date(m.updated_at).getTime();
+      return age >= 0 && age < CACHE_TTL_MS;
+    };
 
     // Strict pre-filter: drop sightings that don't satisfy active filters before
     // paying for Yelp detail calls. Mirrors the dietary-filter behavior.
