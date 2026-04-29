@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bell, Sun, Moon, Smartphone, Leaf, Calendar, MapPin, DollarSign, Star } from "lucide-react";
+import { Sun, Moon, Smartphone, Leaf, Calendar, MapPin, DollarSign, Star } from "lucide-react";
 import { CityChecklist } from "@/components/CityChecklist";
 import { InstallAppCard } from "@/components/InstallAppCard";
 import { PushNotificationsCard } from "@/components/PushNotificationsCard";
@@ -45,11 +45,6 @@ const ratingOptions = [
   { value: 4.5, label: "4.5+ ★" },
 ];
 
-const scheduleOptions = [
-  { value: "daily", label: "Daily" },
-  { value: "3days", label: "Every 3 Days" },
-  { value: "weekly", label: "Weekly" },
-];
 
 export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
@@ -59,7 +54,7 @@ export default function Settings() {
   const [, setMinRating] = useLocalStorage<number>("min_rating", 0);
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
-  const [schedule, setSchedule] = useLocalStorage<string>("notification_schedule", "");
+  
   const [rawInput, setRawInput] = useState<string>(String(openedWithinValue));
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
@@ -278,35 +273,6 @@ export default function Settings() {
           {validationError && (
             <p className="text-xs text-destructive">{validationError}</p>
           )}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Bell className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Notification Frequency</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Pick a cadence, or none to turn notifications off.
-        </p>
-        <div className="flex gap-2">
-          {scheduleOptions.map((opt) => {
-            const isSelected = schedule === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => setSchedule(isSelected ? "" : opt.value)}
-                className={cn(
-                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                  isSelected
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                )}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
         </div>
       </section>
 
