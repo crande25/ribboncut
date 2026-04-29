@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`[subscribe-push] ok device=${device_id.slice(0, 8)} cities=${cities.length} freq=${frequency}`);
+    console.log(`[subscribe-push] ok device=${device_id.slice(0, 8)} cities=${cities.length} freq=${frequency} tz=${timezone}`);
     return new Response(JSON.stringify({ ok: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

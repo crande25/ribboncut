@@ -25,6 +25,28 @@ interface Subscription {
   last_notified_at: string | null;
   enabled: boolean;
   created_at: string;
+  timezone: string;
+  preferred_hour: number;
+}
+
+// Returns the current hour (0-23) at the given IANA timezone.
+function localHourIn(tz: string): number {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      hour12: false,
+    });
+    return parseInt(fmt.format(new Date()), 10);
+  } catch {
+    // Fallback to ET if the stored timezone is somehow invalid.
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Detroit",
+      hour: "numeric",
+      hour12: false,
+    });
+    return parseInt(fmt.format(new Date()), 10);
+  }
 }
 
 function buildBody(count: number, cities: string[]): { title: string; body: string } {
