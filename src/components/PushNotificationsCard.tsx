@@ -44,6 +44,12 @@ export function NotificationsCard() {
     busy,
   } = usePushNotifications(cities, frequency);
 
+  const { canInstall, isStandalone } = useInstallPrompt();
+  const isAndroidNonChromium = useMemo(() => detectAndroidNonChromium(), []);
+  // Show the manual Android hint only if: Android non-Chromium browser, not already installed,
+  // and no native install prompt is available.
+  const showAndroidManualHint = isAndroidNonChromium && !isStandalone && !canInstall;
+
   const hasFrequency = frequency.length > 0;
   const lastFrequencyRef = useRef<string>(frequency);
 
@@ -108,6 +114,32 @@ export function NotificationsCard() {
             Pick a cadence to get pinged when new restaurants open in your saved locations.
             Select again to turn notifications off.
           </p>
+
+          {showAndroidManualHint && (
+            <div className="rounded-lg border border-border bg-secondary/50 p-4 space-y-3 text-xs text-muted-foreground">
+              <p className="text-foreground font-medium">Install RibbonCut for the best experience 📲</p>
+              <p>
+                Your browser doesn't offer a one-tap install. You can still add
+                RibbonCut to your home screen from the browser menu:
+              </p>
+              <ol className="space-y-1.5 list-decimal list-inside">
+                <li className="flex flex-wrap items-center gap-1.5">
+                  <span>Tap the menu</span>
+                  <MoreVertical className="h-3.5 w-3.5 inline text-primary" />
+                  <span>in your browser's toolbar</span>
+                </li>
+                <li>
+                  Choose <span className="text-foreground font-medium">Install</span> or{" "}
+                  <span className="text-foreground font-medium">Add to Home screen</span>
+                </li>
+                <li>Confirm, then open RibbonCut from your home screen.</li>
+              </ol>
+              <p className="text-[11px] opacity-80">
+                Tip: Chrome, Edge, Opera, and Samsung Internet on Android offer a
+                one-tap install button.
+              </p>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
             {scheduleOptions.map((opt) => {
