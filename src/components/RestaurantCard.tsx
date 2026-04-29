@@ -29,8 +29,8 @@ export function RestaurantCard({ restaurant }: { restaurant: Restaurant }) {
       <div className="space-y-3 p-4">
         <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
           <span className="rounded-full bg-secondary px-2 py-0.5">{restaurant.cuisine}</span>
-          <span className="flex items-center gap-0.5">
-            <DollarSign className="h-3 w-3" />
+          <span className="flex items-center gap-1">
+            <span className="text-muted-foreground/70">Price</span>
             {restaurant.priceRange}
           </span>
           {restaurant.rating && (
