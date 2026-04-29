@@ -1,0 +1,1 @@
+UPDATE restaurant_sightings SET first_seen_at = '2026-04-21T12:00:00Z' WHERE yelp_id = 'f5WQIZC2mkkHm3VeOuausA';
