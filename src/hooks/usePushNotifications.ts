@@ -38,6 +38,23 @@ function isStandalone(): boolean {
   );
 }
 
+// Push can't work inside the Lovable preview iframe — service workers are
+// proactively unregistered there (see src/main.tsx). Detect that environment
+// so the UI can show "unsupported" instead of looping on enable().
+function isPreviewEnvironment(): boolean {
+  if (typeof window === "undefined") return false;
+  let inIframe = false;
+  try {
+    inIframe = window.self !== window.top;
+  } catch {
+    inIframe = true;
+  }
+  const host = window.location.hostname;
+  const isPreviewHost =
+    host.includes("id-preview--") || host.includes("lovableproject.com");
+  return inIframe || isPreviewHost;
+}
+
 interface UsePushReturn {
   /** Browser supports push at all (and on iOS, app is installed to home screen). */
   supported: boolean;
@@ -71,14 +88,15 @@ export function usePushNotifications(cities: string[], frequency: string): UsePu
 
   const ios = typeof navigator !== "undefined" && detectIOS();
   const standalone = typeof window !== "undefined" && isStandalone();
+  const inPreview = isPreviewEnvironment();
   const hasPushApi =
     typeof window !== "undefined" &&
     "serviceWorker" in navigator &&
     "PushManager" in window &&
     typeof Notification !== "undefined";
-  // iOS only allows push from installed PWAs.
-  const supported = hasPushApi && (!ios || standalone);
-  const needsIOSInstall = ios && !standalone;
+  // iOS only allows push from installed PWAs. Preview/iframe can't run a SW.
+  const supported = hasPushApi && !inPreview && (!ios || standalone);
+  const needsIOSInstall = ios && !standalone && !inPreview;
 
   const lastSyncRef = useRef<string>("");
 
