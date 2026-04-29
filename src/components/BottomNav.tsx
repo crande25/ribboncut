@@ -21,7 +21,7 @@ export function BottomNav() {
               key={tab.path}
               onClick={() => navigate(tab.path)}
               className={cn(
-                "flex flex-1 flex-col items-center gap-1 py-3 text-xs transition-colors",
+                "flex flex-1 flex-col items-center gap-1 py-3 text-sm font-semibold transition-colors",
                 active ? "text-primary" : "text-muted-foreground"
               )}
             >
