@@ -42,7 +42,7 @@ export function RestaurantFeed() {
     name: r.name,
     city: r.city,
     imageUrl: r.imageUrl || r.photos?.[0] || "",
-    foodSummary: `${r.cuisine} • ${r.rating ? `${r.rating}★` : ""} ${r.reviewCount ? `(${r.reviewCount} reviews)` : ""}`.trim(),
+    foodSummary: r.cuisine,
     atmosphereSummary: r.atmosphereSummary || `${r.cuisine} · ${r.priceRange || ""}`.replace(/ · $/, ""),
     openedDate: r.firstSeenAt || new Date().toISOString(),
     cuisine: r.cuisine,
