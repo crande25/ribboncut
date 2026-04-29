@@ -219,14 +219,12 @@ export function RestaurantFeed() {
         isPastThreshold={isPastThreshold}
       />
 
-      {(loading || restaurants.length === 0) && (
-        <div className="flex flex-col items-center gap-2 py-10 text-center animate-in fade-in duration-500">
-          <h1 className="text-4xl font-bold tracking-tight text-primary">RibbonCut</h1>
-          <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-            What just opened
-          </p>
-        </div>
-      )}
+      <div className="flex flex-col items-center gap-2 py-6 text-center">
+        <h1 className="text-4xl font-bold tracking-tight text-primary">RibbonCut</h1>
+        <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+          What just opened
+        </p>
+      </div>
 
       <button
         onClick={handleRefresh}
