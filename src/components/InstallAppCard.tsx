@@ -26,7 +26,7 @@ export function InstallAppCard() {
         <h2 className="text-sm font-semibold text-foreground">Install App</h2>
       </div>
       <p className="text-xs text-muted-foreground">
-        Add PlatePing to your home screen for one-tap access.
+        Add RibbonCut to your home screen for one-tap access.
       </p>
       <button
         onClick={handleClick}
@@ -36,7 +36,7 @@ export function InstallAppCard() {
         )}
       >
         <Download className="h-3.5 w-3.5" />
-        {canInstall ? "Install PlatePing" : "How to install"}
+        {canInstall ? "Install RibbonCut" : "How to install"}
       </button>
 
       {isIOS && showIOSHelp && (

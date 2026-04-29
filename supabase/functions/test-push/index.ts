@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY");
     const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
-    const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") || "mailto:noreply@plateping.app";
+    const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") || "mailto:noreply@ribboncut.app";
 
     if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
       return new Response(JSON.stringify({ error: "VAPID keys not configured" }), {
@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
 
     const result = await sendWebPush(
       { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
-      { title: "PlatePing test 🍽️", body: "Push notifications are working!", url: "/", tag: "test-push" },
+      { title: "RibbonCut test 🍽️", body: "Push notifications are working!", url: "/", tag: "test-push" },
       { vapidPublic: VAPID_PUBLIC_KEY, vapidPrivate: VAPID_PRIVATE_KEY, vapidSubject: VAPID_SUBJECT },
     );
 

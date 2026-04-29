@@ -47,9 +47,9 @@ export function PushNotificationsCard() {
 
       {needsIOSInstall ? (
         <div className="rounded-lg border border-border bg-secondary/50 p-4 space-y-2 text-xs text-muted-foreground">
-          <p className="text-foreground font-medium">Install PlatePing first 📲</p>
+          <p className="text-foreground font-medium">Install RibbonCut first 📲</p>
           <p>
-            On iPhone & iPad, push notifications only work after you add PlatePing
+            On iPhone & iPad, push notifications only work after you add RibbonCut
             to your home screen. Use the <span className="text-foreground font-medium">Install App</span>{" "}
             section above, then come back here.
           </p>
