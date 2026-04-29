@@ -1,0 +1,2 @@
+ALTER TABLE public.restaurant_sightings ADD COLUMN IF NOT EXISTS yelp_unavailable_at timestamptz NULL;
+CREATE INDEX IF NOT EXISTS idx_restaurant_sightings_unavailable ON public.restaurant_sightings (yelp_unavailable_at) WHERE yelp_unavailable_at IS NOT NULL;
