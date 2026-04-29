@@ -388,6 +388,16 @@ async function verifyOnYelp(
   }
 
   const rejections: string[] = [];
+  // Reject results whose ONLY food-relevant alias is a lodging category.
+  // Yelp's "restaurants,food" search filter still surfaces hotels with onsite
+  // restaurants (e.g., "The Vanguard Ann Arbor, Autograph Collection" tagged
+  // only as "hotels"). We want true restaurants, not hotels-with-a-restaurant.
+  const NON_RESTAURANT_ALIASES = new Set([
+    "hotels", "hotelstravel", "resorts", "bedbreakfast", "guesthouses", "hostels",
+  ]);
+  const isLodgingOnly = (aliases: string[]) =>
+    aliases.length > 0 && aliases.every((a) => NON_RESTAURANT_ALIASES.has(a));
+
   for (const b of businesses) {
     if (!b?.id || !b?.name) {
       rejections.push("missing-id-or-name");
@@ -402,6 +412,13 @@ async function verifyOnYelp(
       rejections.push(`city-mismatch("${b.name}" → ${yelpCity ?? "?"})`);
       continue;
     }
+    const aliases: string[] = (b.categories || [])
+      .map((c: any) => String(c.alias || "").toLowerCase())
+      .filter(Boolean);
+    if (isLodgingOnly(aliases)) {
+      rejections.push(`lodging-only("${b.name}" aliases=${JSON.stringify(aliases)})`);
+      continue;
+    }
     const displayAddress = Array.isArray(b?.location?.display_address)
       ? b.location.display_address.join(", ")
       : null;
@@ -411,7 +428,7 @@ async function verifyOnYelp(
         yelp_name: b.name,
         yelp_city: yelpCity || targetCity,
         candidate,
-        categoryAliases: (b.categories || []).map((c: any) => String(c.alias || "").toLowerCase()).filter(Boolean),
+        categoryAliases: aliases,
         categoryTitles: (b.categories || []).map((c: any) => String(c.title || "")).filter(Boolean),
         priceLevel: typeof b.price === "string" && b.price.length > 0 ? b.price.length : null,
         rating: typeof b.rating === "number" ? b.rating : null,
