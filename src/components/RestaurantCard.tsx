@@ -1,4 +1,4 @@
-import { UtensilsCrossed, Sparkles, Clock, DollarSign, Star, ExternalLink } from "lucide-react";
+import { UtensilsCrossed, Sparkles, Clock, Star, ExternalLink } from "lucide-react";
 import type { Restaurant } from "@/lib/mockData";
 
 function timeAgo(dateStr: string) {
