@@ -62,6 +62,20 @@ export default function Settings() {
   const deviceId = useDeviceId();
   const { theme, setTheme } = useTheme();
 
+  const hasAnyFilter =
+    selectedCities.length > 0 ||
+    priceFilters.length > 0 ||
+    ratingThresholds.length > 0 ||
+    dietaryFilters.length > 0;
+
+  const clearAllFilters = () => {
+    setSelectedCities([]);
+    setPriceFilters([]);
+    setRatingThresholds([]);
+    setMinRating(0);
+    setDietaryFilters([]);
+  };
+
   const currentMax = maxValues[openedWithinUnit] || 12;
   const parsedRaw = parseInt(rawInput);
   const validationError = isNaN(parsedRaw) || parsedRaw > currentMax
@@ -70,8 +84,16 @@ export default function Settings() {
 
   return (
     <div className="space-y-8">
-      <div>
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-bold text-foreground">Settings ⚙️</h1>
+        {hasAnyFilter && (
+          <button
+            onClick={clearAllFilters}
+            className="rounded-full px-4 py-2 text-xs font-medium transition-all no-select bg-destructive/15 text-destructive hover:bg-destructive/25"
+          >
+            Clear Filters
+          </button>
+        )}
       </div>
 
       <section className="space-y-3">

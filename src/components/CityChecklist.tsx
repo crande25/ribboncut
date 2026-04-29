@@ -40,14 +40,6 @@ export function CityChecklist({ selectedCities, onCitiesChange }: CityChecklistP
         >
           {allSelected ? "Deselect All" : "Select All"}
         </button>
-        {selectedCities.length > 0 && (
-          <button
-            onClick={() => onCitiesChange([])}
-            className="rounded-full px-4 py-2 text-xs font-medium transition-all no-select bg-destructive/15 text-destructive hover:bg-destructive/25"
-          >
-            Clear Locations
-          </button>
-        )}
       </div>
 
       <div className="grid grid-cols-2 gap-2">
