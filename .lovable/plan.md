@@ -1,68 +1,105 @@
-## Goal
+# Pre-Demo Refactor Plan (Zero Behavior Change)
 
-Add a Content Security Policy to mitigate XSS and unauthorized resource loading. Implement via `<meta http-equiv="Content-Security-Policy">` in `index.html` since Lovable hosting doesn't expose response-header config.
+Goal: clean up the rough edges a developer will notice on a code-walkthrough, without altering any user-visible behavior, API contracts, DB schema, or business logic. Each item below is mechanical (extract / dedupe / rename / type) — no logic changes.
 
-## Caveat (be honest about it)
+I'll verify "no behavior change" by reading the diffed call sites and relying on the existing test setup. No DB migrations, no edge function contract changes.
 
-A meta-tag CSP is weaker than a header CSP — `frame-ancestors`, `report-uri`, and `sandbox` are ignored when set via meta. Everything else works. For your threat model (small audience, no auth, public data) this is the right trade-off; if you ever move to self-hosting, port the policy to a real header.
+---
 
-## Inventory of what the app loads
+## 1. `src/components/RestaurantFeed.tsx` (300 lines → ~190)
 
-| Resource | Origin |
-|---|---|
-| App JS/CSS | self (built bundle) |
-| Supabase REST + Edge Functions | `https://dcvgzkhoxlvtynlnxsdw.supabase.co` |
-| Yelp restaurant images | `https://*.fl.yelpcdn.com` |
-| Mock/demo images | `https://images.unsplash.com` |
-| OpenStreetMap geocoding (CitySearch) | `https://nominatim.openstreetmap.org` |
-| OG preview image | `https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev` |
-| Vite dev HMR (preview only) | `ws:` and `wss:` to lovable preview hosts |
-| Inline styles | Tailwind/shadcn inject some — needs `'unsafe-inline'` for `style-src` |
+**Problem:** Three near-identical fetch flows (`fetchInitial`, `loadMore`, `handleRefresh`) duplicate the same "call fetchPage → branch on results/more → set state" block. The mock-data fallback is duplicated twice. Mapping logic is inline.
 
-No Google Fonts, no analytics scripts, no third-party JS in the client. Lovable's visitor tracking is injected by the host platform on the published domain and is exempt from app-level CSP because it runs above your bundle.
+**Refactor:**
+- Extract `mapToRestaurant` to `src/lib/restaurantMapper.ts` (pure function, easy unit-testable).
+- Extract a `useRestaurantFeed` hook that owns `restaurants / loading / loadingMore / refreshing / hasMore / currentOffset / usingMockData` plus `loadInitial`, `loadMore`, `refresh`. Component becomes pure presentation.
+- Collapse `fetchInitial` and `handleRefresh` into one `loadFromStart(opts: { showSkeleton: boolean })`. Their bodies are identical except for which loading flag they toggle and the toast on the refresh fallback.
+- Extract the mock-data fallback into one helper `buildMockFallback(selectedCities)`.
 
-## The policy
+**Verified non-functional:** existing infinite-scroll cursor fix (the `nextOffset = offset + PAGE_SIZE` logic) is preserved verbatim — that's the behavior we just shipped.
 
-```text
-default-src 'self';
-script-src 'self';
-style-src 'self' 'unsafe-inline';
-img-src 'self' data: blob: https://*.fl.yelpcdn.com https://images.unsplash.com https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev;
-font-src 'self' data:;
-connect-src 'self' https://dcvgzkhoxlvtynlnxsdw.supabase.co wss://dcvgzkhoxlvtynlnxsdw.supabase.co https://nominatim.openstreetmap.org ws: wss:;
-manifest-src 'self';
-worker-src 'self';
-object-src 'none';
-base-uri 'self';
-form-action 'self';
-upgrade-insecure-requests
-```
+## 2. `supabase/functions/get-restaurants/index.ts` (468 lines → ~280 across 4 files)
 
-Notes on the choices:
-- `script-src 'self'` — no inline scripts, no `unsafe-eval`. Vite production builds don't need either.
-- `style-src 'unsafe-inline'` — required by shadcn/Radix/Tailwind which inject style attributes at runtime. Removing it breaks every dialog, tooltip, and animated component. Acceptable trade-off.
-- `img-src` allowlist covers Yelp CDN (real data), Unsplash (mock fallback), and the R2 OG image host.
-- `connect-src` includes `wss:` for Vite HMR in the preview iframe; harmless in production.
-- `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` — cheap hardening wins.
-- `upgrade-insecure-requests` — auto-promotes any stray `http://` references.
+Currently one giant `Deno.serve` handler doing: env validation, query parsing, PostgREST URL building, batch cache fetches, pre-filtering, inline vibe backfill, per-sighting Yelp fetch + lazy cache writes, response shaping.
 
-## Files to change
+**Refactor (split into siblings the function already imports from `./`):**
+- `params.ts` — `parseQueryParams(url)` returns a typed `{ offset, limit, openedSince, cities, dietaryCategories, selectedPrices, minRating }`. Move the ISO-8601 validation regex here. Returns `{ ok, value } | { ok: false, error }`.
+- `sightingsQuery.ts` — `buildSightingsUrl(params)` returns the PostgREST URL string. Move the city-encoding logic here. Pure function — trivial to add a unit test.
+- `cache.ts` — `loadCacheBatches(supabase, yelpIds)` returns `{ atmosphereMap, categoryMap, metricsMap }`. Also exposes `isCacheUsable(yelpId, maps)` and `buildFromCache(sighting, maps)`.
+- `prefilter.ts` — `applyPrefilters(sightings, { dietaryCategories, selectedPrices, minRating, hasPriceFilter, hasRatingFilter, categoryMap, metricsMap })`. Includes the lodging-only drop and the dietary/price/rating drops, with the same `console.log` counters.
+- `vibeBackfill.ts` — the inline concurrency-limited `generate-vibe` caller, with the same 8/6s/10s budgets.
+- `yelpEnrich.ts` — per-sighting Yelp fetch + lazy `restaurant_categories` and `restaurant_metrics` upserts + tombstoning of `BUSINESS_UNAVAILABLE`. Returns the shaped restaurant object.
 
-- **Edit `index.html`** — add a single `<meta http-equiv="Content-Security-Policy" content="…">` tag in `<head>`, just after the charset/viewport metas.
+`index.ts` becomes a thin orchestrator: parse → query DB → load caches → prefilter → backfill vibes → enrich → respond. All `console.log` strings, error handling, status codes, and response shapes preserved exactly.
 
-No other files change. No backend changes. No dependencies.
+## 3. CORS + Supabase client bootstrap duplication across edge functions
 
-## Verification after deploy
+Every function re-declares the same `corsHeaders` object and the same `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` env-check boilerplate.
 
-1. Open the preview, browse the feed, open Settings, submit Contact us, install PWA prompt, refresh.
-2. Open DevTools console and filter for `Content Security Policy` — any violations will be logged. If something legitimate is blocked (e.g., a Yelp image from a new subdomain), I'll widen the allowlist.
-3. Run https://csp-evaluator.withgoogle.com/ against the published URL for a second opinion.
+**Refactor:** add `supabase/functions/_shared/http.ts` exporting:
+- `corsHeaders`
+- `jsonResponse(body, status)`
+- `handleOptions(req)`
+- `getServiceClient()` (throws a typed error on missing env, caller returns a 500)
 
-## Rollback
+Apply to `get-restaurants`, `discover-new-restaurants`, `generate-vibe`, `backfill-vibes`, `backfill-categories`, push-notification functions, etc. There's already a `_shared/` folder used by the email templates — same pattern.
 
-If something breaks in production that I missed, comment out the meta tag in `index.html` and republish — instant revert, no migration involved.
+## 4. `discover-new-restaurants/index.ts` — remove the inlined `YelpKeyPool`
 
-## What this does not cover
+Lines 14–~150 of this file are an exact-copy reimplementation of `get-restaurants/yelpKeys.ts`, with a comment explaining edge functions can't share folders. They can — via `_shared/`.
 
-- Lovable's host-level analytics/badges (out of your control, run above your CSP)
-- `frame-ancestors` (ignored in meta) — if you care about clickjacking protection, that needs the header form on a self-hosted setup later.
+**Refactor:** move `YelpKeyPool` to `supabase/functions/_shared/yelpKeyPool.ts` and import from both `get-restaurants` and `discover-new-restaurants`. ~140 lines deleted, no behavior change.
+
+## 5. `src/pages/Settings.tsx` (328 lines)
+
+The page has six independent setting groups (theme, cities, opened-within, dietary, price, rating, install card, push card, contact). Each is rendered inline.
+
+**Refactor (extract pure presentational components, no state moves):**
+- `ThemeSelector.tsx` (uses `useTheme` directly — already a hook)
+- `OpenedWithinControl.tsx` (owns the `rawInput` local state + validation)
+- `MultiToggleGroup.tsx` — generic chip-toggle list, then use it for dietary / price / rating
+
+State remains in `Settings.tsx` via the same `useLocalStorage` keys, passed down as props. Page becomes a layout shell.
+
+## 6. `src/lib/api.ts` — small typing tightening
+
+`getRestaurants` returns `RestaurantResult[]` whose fields are typed loosely (`rating: number` even though backend can return null; `coordinates?` is `{latitude, longitude}` but `cache.ts` assigns the raw `coordinates: any`). 
+
+**Refactor:** make nullable fields explicit (`rating: number | null`, `priceRange: string | null`), and add a single shared `Restaurant` type re-exported from one place rather than the duplicated shape between `mockData.ts` and `api.ts`. Update consumers — TS will guide. The runtime `mapToRestaurant` already handles nulls via `||` fallbacks, so behavior is unchanged.
+
+## 7. Misc small wins
+
+- Delete unused imports flagged by ESLint (currently `no-unused-vars` is off — re-enabling it as `warn` would surface a clean baseline).
+- `RestaurantFeed.tsx`: extract `PAGE_SIZE` constant into `lib/api.ts` next to `getRestaurants` since the comment about cursor advancement is really about the API contract.
+- Consistent log prefix convention: `[get-restaurants]`, `[discover]`, `[vibe-fill]` — many functions already do this, a few don't.
+- Replace the empty `README.md` (`TODO: Document your project here`) with a 1-paragraph project description, run instructions, and an architecture link to the memory note about hybrid DB+Yelp.
+
+---
+
+## Out of scope (intentionally NOT touching)
+
+- DB schema, migrations, RLS policies.
+- Edge function HTTP contracts (request/response shapes, status codes).
+- The cursor-pagination fix.
+- Yelp key rotation logic.
+- Authentication, push notifications, email — these are stable and untouched.
+
+## Validation strategy
+
+- For each extracted module: read every call site of the moved code and confirm signatures match.
+- Run `vitest` (existing setup) after each phase.
+- For edge functions: run `supabase--test_edge_functions` if tests exist; otherwise smoke via `curl_edge_functions` against the same query the user just used (Ann Arbor / Detroit / Ypsi, $-$$, 4★+) and diff the JSON response shape.
+
+## Rough order / size
+
+| # | Area | Risk | Lines moved |
+|---|------|------|-------------|
+| 4 | Inlined YelpKeyPool dedup | very low | ~140 deleted |
+| 3 | Shared CORS / client helpers | very low | ~60 deduped |
+| 1 | RestaurantFeed hook extraction | low | ~110 reorganized |
+| 2 | get-restaurants split | medium | ~470 reorganized |
+| 5 | Settings component extraction | low | ~150 reorganized |
+| 6 | api.ts type tightening | low | small |
+| 7 | Misc | very low | small |
+
+Items can ship independently; recommend doing them in the order above (cheapest-and-safest first).
