@@ -14,6 +14,11 @@ Categories used:
 
 ---
 
+## 2026-04-30
+
+### Fixed
+- **Nightly harvest**: Rescheduled `discover-new-restaurants-daily` cron from `0 6 * * *` UTC (≈2am ET) to `30 8 * * *` UTC (30 min after Yelp's daily quota reset at 08:00 UTC / midnight Pacific). The previous schedule ran *before* Yelp's reset, so on days when keys were exhausted the harvest started with no usable Yelp keys and inserted zero sightings even though the cron reported success.
+
 ## 2026-04-30 (later)
 
 ### Changed
