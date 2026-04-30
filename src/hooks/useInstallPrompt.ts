@@ -11,15 +11,18 @@ export function useInstallPrompt() {
   const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
-    // Detect iOS
+    // Detect iOS. `MSStream` is an old IE-only global we explicitly exclude.
     const ua = window.navigator.userAgent;
-    const iOS = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
+    const iOS =
+      /iPad|iPhone|iPod/.test(ua) &&
+      !(window as Window & { MSStream?: unknown }).MSStream;
     setIsIOS(iOS);
 
-    // Detect standalone (already installed)
+    // Detect standalone (already installed). `navigator.standalone` is a
+    // non-standard iOS Safari property not in the lib.dom typings.
     const standalone =
       window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as any).standalone === true;
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
     setIsStandalone(standalone);
 
     const handler = (e: Event) => {

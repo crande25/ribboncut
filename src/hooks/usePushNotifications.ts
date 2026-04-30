@@ -28,13 +28,19 @@ function detectTimezone(): string {
 
 function detectIOS(): boolean {
   const ua = navigator.userAgent;
-  return /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream;
+  // `MSStream` is an old IE-only global we explicitly exclude.
+  return (
+    /iPad|iPhone|iPod/.test(ua) &&
+    !(window as Window & { MSStream?: unknown }).MSStream
+  );
 }
 
 function isStandalone(): boolean {
+  // `navigator.standalone` is a non-standard iOS Safari property not in
+  // lib.dom typings.
   return (
     window.matchMedia("(display-mode: standalone)").matches ||
-    (window.navigator as any).standalone === true
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true
   );
 }
 
@@ -235,9 +241,10 @@ export function usePushNotifications(cities: string[], frequency: string): UsePu
         setMessage(msg);
         return { ok: false, error: msg };
       }
-      if (data && (data as any).error) {
-        setMessage((data as any).error);
-        return { ok: false, error: (data as any).error };
+      const dataError = (data as { error?: string } | null)?.error;
+      if (dataError) {
+        setMessage(dataError);
+        return { ok: false, error: dataError };
       }
       setMessage("Test notification sent! Check your device.");
       return { ok: true };
