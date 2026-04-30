@@ -76,7 +76,7 @@ export function RestaurantFeed() {
       <div className="flex flex-col items-center gap-2 py-6 text-center">
         <h1 className="text-4xl font-bold tracking-tight text-primary">RibbonCut</h1>
         <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          What just opened
+          {tagline}
         </p>
       </div>
 
