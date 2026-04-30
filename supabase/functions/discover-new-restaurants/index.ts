@@ -34,6 +34,23 @@ interface Candidate {
 
 const BATCH_SIZE = 3;
 
+/** Decode a JWT payload without verifying its signature.
+ *  Safe here only because the Supabase gateway has already verified the
+ *  signature (verify_jwt = true) before the handler runs. */
+function parseJwtClaims(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const payload = parts[1]
+      .replaceAll("-", "+")
+      .replaceAll("_", "/")
+      .padEnd(Math.ceil(parts[1].length / 4) * 4, "=");
+    return JSON.parse(atob(payload)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 function formatDate(d: Date): string {
   return d.toLocaleDateString("en-US", {
     month: "long", day: "numeric", year: "numeric",
