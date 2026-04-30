@@ -437,9 +437,7 @@ Deno.serve(async (req) => {
     }
 
     if (citiesToScan.length === 0) {
-      return new Response(JSON.stringify({ ok: true, message: "No cities in this chunk", chunk }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ ok: true, message: "No cities in this chunk", chunk });
     }
 
     const today = new Date();
@@ -457,20 +455,17 @@ Deno.serve(async (req) => {
       const perCity: Record<string, number> = {};
       for (const c of batch) perCity[c] = 0;
       for (const cand of candidates) perCity[cand.city] = (perCity[cand.city] || 0) + 1;
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          debug: true,
-          cities: batch,
-          window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
-          candidate_count: candidates.length,
-          per_city_counts: perCity,
-          candidates,
-          grounding,
-          raw_ai_response: raw,
-        }, null, 2),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonResponse({
+        ok: true,
+        debug: true,
+        cities: batch,
+        window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
+        candidate_count: candidates.length,
+        per_city_counts: perCity,
+        candidates,
+        grounding,
+        raw_ai_response: raw,
+      });
     }
 
     const summary: Array<{
@@ -649,15 +644,10 @@ Deno.serve(async (req) => {
       console.error(`[discover→vibe] phase failed: ${e instanceof Error ? e.message : e}`);
     }
 
-    return new Response(
-      JSON.stringify({ ok: true, total_inserted: totalInserted, elapsed_ms: elapsedMs, summary, vibe_fill: vibeFill }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonResponse({ ok: true, total_inserted: totalInserted, elapsed_ms: elapsedMs, summary, vibe_fill: vibeFill });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[discover] fatal:", msg);
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: msg }, 500);
   }
 });
