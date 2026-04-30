@@ -1,3 +1,12 @@
+/**
+ * Standard page size for paginated requests against the get-restaurants
+ * edge function. The cursor advances by this number against the unfiltered
+ * `total` (server-side filters drop results AFTER paging), so callers must
+ * use this constant rather than the length of the returned page when
+ * computing the next offset.
+ */
+export const PAGE_SIZE = 20;
+
 export interface RestaurantResult {
   id: string;
   name: string;
