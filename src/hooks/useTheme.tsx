@@ -1,13 +1,8 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ThemeContext, type Theme } from "./themeContext";
 
-export type Theme = "dark" | "light" | "system";
-
-interface ThemeContextValue {
-  theme: Theme;
-  setTheme: (theme: Theme) => void;
-}
-
-const ThemeContext = createContext<ThemeContextValue>({ theme: "system", setTheme: () => {} });
+// Re-export hook + type so existing `@/hooks/useTheme` imports keep working.
+export { useTheme, type Theme } from "./themeContext";
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
@@ -48,5 +43,3 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     </ThemeContext.Provider>
   );
 }
-
-export const useTheme = () => useContext(ThemeContext);
