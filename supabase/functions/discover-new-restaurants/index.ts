@@ -356,15 +356,27 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Missing supabase env" }, 500);
     }
 
-    // Restrict callers: only requests bearing the exact service role key
-    // (used by pg_cron and Lovable server-side invocations) are allowed.
-    // Do NOT accept arbitrary JWTs by decoding their payload — without
-    // signature verification, an attacker could forge `role=service_role`.
+    // Restrict callers: only service-role JWTs are allowed.
+    //
+    // The function is configured with `verify_jwt = true` in supabase/config.toml,
+    // so the Supabase gateway has already validated the JWT signature against the
+    // project JWKS before this handler runs. That makes it safe to trust the
+    // `role` claim here without re-verifying the signature ourselves.
+    //
+    // We deliberately do NOT compare the token to the runtime
+    // SUPABASE_SERVICE_ROLE_KEY env var — that string changes whenever the key is
+    // rotated, which would silently break long-lived callers (like pg_cron jobs
+    // with hardcoded JWTs) even though their tokens remain cryptographically
+    // valid.
     const authHeader = req.headers.get("Authorization") ?? "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authorized = token.length > 0 && token === SUPABASE_SERVICE_ROLE_KEY;
-    if (!authorized) {
-      console.log("[discover] forbidden: missing or non-service-role token");
+    if (!authHeader.toLowerCase().startsWith("bearer ")) {
+      console.log("[discover] unauthorized: missing bearer token");
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+    const token = authHeader.slice("bearer ".length).trim();
+    const claims = parseJwtClaims(token);
+    if (claims?.role !== "service_role") {
+      console.log("[discover] forbidden: token role is not service_role");
       return jsonResponse({ error: "Forbidden" }, 403);
     }
 
