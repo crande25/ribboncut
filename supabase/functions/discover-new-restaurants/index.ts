@@ -11,7 +11,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { YelpKeyPool } from "../_shared/yelpKeyPool.ts";
-import { corsHeaders, jsonResponse, handleOptions } from "../_shared/http.ts";
+import { jsonResponse, handleOptions } from "../_shared/http.ts";
 
 // Inline copy — edge functions can't import from src/
 const SE_MICHIGAN_CITIES = [
