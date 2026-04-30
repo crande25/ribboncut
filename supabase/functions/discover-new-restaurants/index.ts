@@ -10,118 +10,8 @@
 // Triggered by pg_cron daily at 08:00 UTC (~3am EST). No UI.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-// ===== Inlined YelpKeyPool (edge functions can't share files across folders) =====
-interface YelpFetchResult {
-  ok: boolean;
-  status: number;
-  body?: any;
-  rateLimited: boolean;
-  authError: boolean;
-  keyName: string;
-  exhaustedAllKeys?: boolean;
-}
-interface KeyEntry { name: string; value: string; exhausted: boolean; resetAt?: Date; }
-
-function nextYelpReset(): Date {
-  const now = new Date();
-  const pacificOffsetHours = 8;
-  const pacific = new Date(now.getTime() - pacificOffsetHours * 3600 * 1000);
-  pacific.setUTCHours(24, 0, 0, 0);
-  return new Date(pacific.getTime() + pacificOffsetHours * 3600 * 1000);
-}
-
-class YelpKeyPool {
-  private keys: KeyEntry[] = [];
-  private supabase: any;
-  private loaded = false;
-  constructor(supabase: any) { this.supabase = supabase; }
-
-  async load(): Promise<void> {
-    if (this.loaded) return;
-    const candidates: KeyEntry[] = [];
-    const primary = Deno.env.get("YELP_API_KEY");
-    if (primary) candidates.push({ name: "YELP_API_KEY", value: primary, exhausted: false });
-    for (let i = 2; i <= 20; i++) {
-      const v = Deno.env.get(`YELP_API_KEY_${i}`);
-      if (v) candidates.push({ name: `YELP_API_KEY_${i}`, value: v, exhausted: false });
-    }
-    if (candidates.length === 0) throw new Error("No YELP_API_KEY* env vars found");
-
-    const { data: statuses } = await this.supabase
-      .from("api_key_status").select("key_name, exhausted_at, reset_at")
-      .eq("provider", "yelp").in("key_name", candidates.map((c) => c.name));
-
-    const now = new Date();
-    const statusMap = new Map<string, { reset_at: string | null }>();
-    for (const s of statuses || []) statusMap.set(s.key_name, s);
-    for (const c of candidates) {
-      const s = statusMap.get(c.name);
-      if (s?.reset_at) {
-        const resetAt = new Date(s.reset_at);
-        if (resetAt > now) { c.exhausted = true; c.resetAt = resetAt; }
-      }
-    }
-    this.keys = candidates;
-    this.loaded = true;
-    const available = this.keys.filter((k) => !k.exhausted).length;
-    console.log(`[YelpKeyPool] loaded ${this.keys.length} keys, ${available} available`);
-  }
-
-  private async markExhausted(keyName: string, status: number, errorBody: string): Promise<void> {
-    const resetAt = nextYelpReset();
-    const entry = this.keys.find((k) => k.name === keyName);
-    if (entry) { entry.exhausted = true; entry.resetAt = resetAt; }
-    console.warn(`[YelpKeyPool] marking ${keyName} EXHAUSTED status=${status}`);
-    await this.supabase.from("api_key_status").upsert({
-      provider: "yelp", key_name: keyName,
-      exhausted_at: new Date().toISOString(),
-      reset_at: resetAt.toISOString(),
-      last_error: errorBody.slice(0, 500), last_status: status,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "key_name" });
-  }
-
-  private nextAvailable(): KeyEntry | null {
-    return this.keys.find((k) => !k.exhausted) || null;
-  }
-
-  async fetch(url: string): Promise<YelpFetchResult> {
-    if (!this.loaded) await this.load();
-    while (true) {
-      const key = this.nextAvailable();
-      if (!key) return { ok: false, status: 0, rateLimited: true, authError: false, keyName: "(none)", exhaustedAllKeys: true };
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${key.value}`, Accept: "application/json" } });
-      if (res.status === 401 || res.status === 403) {
-        const body = await res.text();
-        await this.markExhausted(key.name, res.status, body);
-        continue;
-      }
-      if (res.status === 429) {
-        const body = await res.text();
-        if (/TOO_MANY_REQUESTS_PER_SECOND/i.test(body)) {
-          await new Promise((r) => setTimeout(r, 1500));
-          continue;
-        }
-        await this.markExhausted(key.name, res.status, body);
-        continue;
-      }
-      if (!res.ok) {
-        const body = await res.text();
-        return { ok: false, status: res.status, body, rateLimited: false, authError: false, keyName: key.name };
-      }
-      const data = await res.json();
-      return { ok: true, status: 200, body: data, rateLimited: false, authError: false, keyName: key.name };
-    }
-  }
-}
-// ===== End YelpKeyPool =====
-
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import { YelpKeyPool } from "../_shared/yelpKeyPool.ts";
+import { jsonResponse, handleOptions } from "../_shared/http.ts";
 
 // Inline copy — edge functions can't import from src/
 const SE_MICHIGAN_CITIES = [
@@ -454,9 +344,8 @@ async function verifyOnYelp(
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  const preflight = handleOptions(req);
+  if (preflight) return preflight;
 
   const startedAt = Date.now();
 
@@ -464,9 +353,7 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return new Response(JSON.stringify({ error: "Missing supabase env" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "Missing supabase env" }, 500);
     }
 
     // Restrict callers: only requests bearing the exact service role key
@@ -477,15 +364,14 @@ Deno.serve(async (req) => {
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
     const authorized = token.length > 0 && token === SUPABASE_SERVICE_ROLE_KEY;
     if (!authorized) {
-      console.log("forbidden: missing or non-service-role token");
-      return new Response(JSON.stringify({ error: "Forbidden" }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      console.log("[discover] forbidden: missing or non-service-role token");
+      return jsonResponse({ error: "Forbidden" }, 403);
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const pool = new YelpKeyPool(supabase);
     await pool.load();
+
 
     // Optional on-demand override: pipe-delimited city list (cities contain commas).
     // Accepts ?cities=Detroit,%20MI|Ann%20Arbor,%20MI  OR  JSON body { cities: [...], days?: 7 }
@@ -551,9 +437,7 @@ Deno.serve(async (req) => {
     }
 
     if (citiesToScan.length === 0) {
-      return new Response(JSON.stringify({ ok: true, message: "No cities in this chunk", chunk }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ ok: true, message: "No cities in this chunk", chunk });
     }
 
     const today = new Date();
@@ -571,20 +455,17 @@ Deno.serve(async (req) => {
       const perCity: Record<string, number> = {};
       for (const c of batch) perCity[c] = 0;
       for (const cand of candidates) perCity[cand.city] = (perCity[cand.city] || 0) + 1;
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          debug: true,
-          cities: batch,
-          window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
-          candidate_count: candidates.length,
-          per_city_counts: perCity,
-          candidates,
-          grounding,
-          raw_ai_response: raw,
-        }, null, 2),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonResponse({
+        ok: true,
+        debug: true,
+        cities: batch,
+        window: { from: sevenDaysAgoStr, to: todayStr, days: lookbackDays },
+        candidate_count: candidates.length,
+        per_city_counts: perCity,
+        candidates,
+        grounding,
+        raw_ai_response: raw,
+      });
     }
 
     const summary: Array<{
@@ -763,15 +644,10 @@ Deno.serve(async (req) => {
       console.error(`[discover→vibe] phase failed: ${e instanceof Error ? e.message : e}`);
     }
 
-    return new Response(
-      JSON.stringify({ ok: true, total_inserted: totalInserted, elapsed_ms: elapsedMs, summary, vibe_fill: vibeFill }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return jsonResponse({ ok: true, total_inserted: totalInserted, elapsed_ms: elapsedMs, summary, vibe_fill: vibeFill });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[discover] fatal:", msg);
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse({ error: msg }, 500);
   }
 });

@@ -1,19 +1,38 @@
+/**
+ * Standard page size for paginated requests against the get-restaurants
+ * edge function. The cursor advances by this number against the unfiltered
+ * `total` (server-side filters drop results AFTER paging), so callers must
+ * use this constant rather than the length of the returned page when
+ * computing the next offset.
+ */
+export const PAGE_SIZE = 20;
+
+/**
+ * Raw shape returned by the get-restaurants edge function. Several fields
+ * are nullable because Yelp doesn't always provide them (price, rating, and
+ * review_count in particular). Display code is responsible for fallbacks.
+ */
 export interface RestaurantResult {
   id: string;
   name: string;
   city: string;
   cuisine: string;
-  priceRange: string;
+  priceRange: string | null;
   imageUrl: string;
-  rating: number;
-  reviewCount: number;
+  rating: number | null;
+  reviewCount: number | null;
   address: string;
   phone: string;
   url: string;
   photos: string[];
-  hours: any[];
-  coordinates?: { latitude: number; longitude: number };
+  hours: unknown[];
+  coordinates?: { latitude: number; longitude: number } | null;
   firstSeenAt: string;
+  /**
+   * AI-generated mood/atmosphere blurb. Backend always returns a string —
+   * either a real generated vibe, or a "<categories> · <price>" fallback.
+   */
+  atmosphereSummary: string;
 }
 
 export interface GetRestaurantsResponse {

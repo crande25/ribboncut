@@ -1,8 +1,16 @@
 // Yelp API key pool with automatic rotation on quota/auth exhaustion.
 //
-// Keys are loaded from env vars: YELP_API_KEY, YELP_API_KEY_2, YELP_API_KEY_3, ...
-// Exhaustion is persisted to the `api_key_status` table with a `reset_at` timestamp.
-// Yelp's daily quota resets at midnight Pacific Time.
+// Keys are loaded from env vars: YELP_API_KEY, YELP_API_KEY_2, ..., YELP_API_KEY_20.
+// Exhaustion is persisted to the `api_key_status` table with a `reset_at` timestamp
+// (Yelp's daily quota resets at midnight Pacific Time).
+//
+// 401 → key is dead, mark exhausted + rotate.
+// 403 → distinguish key-level (TOKEN_INVALID/MISSING/REVOKED, FORBIDDEN_CLIENT) vs
+//       per-resource (BUSINESS_UNAVAILABLE etc.). Only key-level marks exhausted.
+// 429 → distinguish ACCESS_LIMIT_REACHED (mark exhausted) vs
+//       TOO_MANY_REQUESTS_PER_SECOND (back off + retry same key).
+
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 export interface YelpFetchResult {
   ok: boolean;
@@ -21,27 +29,21 @@ interface KeyEntry {
   resetAt?: Date;
 }
 
-/** Compute the next Yelp daily-quota reset: midnight Pacific Time. */
+/** Compute the next Yelp daily-quota reset: midnight Pacific Time (approximated to UTC-8). */
 function nextYelpReset(): Date {
-  // Pacific is UTC-8 (PST) or UTC-7 (PDT). We approximate to UTC-8 for safety
-  // (a slightly later reset just means we re-try a key one hour late at worst).
   const now = new Date();
   const pacificOffsetHours = 8;
-  // Current time in pacific
-  const pacificMs = now.getTime() - pacificOffsetHours * 3600 * 1000;
-  const pacific = new Date(pacificMs);
-  // Next midnight in pacific
+  const pacific = new Date(now.getTime() - pacificOffsetHours * 3600 * 1000);
   pacific.setUTCHours(24, 0, 0, 0);
-  // Convert back to real UTC
   return new Date(pacific.getTime() + pacificOffsetHours * 3600 * 1000);
 }
 
 export class YelpKeyPool {
   private keys: KeyEntry[] = [];
-  private supabase: any;
+  private supabase: SupabaseClient;
   private loaded = false;
 
-  constructor(supabase: any) {
+  constructor(supabase: SupabaseClient) {
     this.supabase = supabase;
   }
 
@@ -50,20 +52,16 @@ export class YelpKeyPool {
     if (this.loaded) return;
 
     const candidates: KeyEntry[] = [];
-    // Primary key
     const primary = Deno.env.get("YELP_API_KEY");
     if (primary) candidates.push({ name: "YELP_API_KEY", value: primary, exhausted: false });
-    // Numbered fallbacks YELP_API_KEY_2 .. YELP_API_KEY_20
     for (let i = 2; i <= 20; i++) {
       const v = Deno.env.get(`YELP_API_KEY_${i}`);
       if (v) candidates.push({ name: `YELP_API_KEY_${i}`, value: v, exhausted: false });
     }
-
     if (candidates.length === 0) {
       throw new Error("No YELP_API_KEY* env vars found");
     }
 
-    // Load persisted status
     const { data: statuses } = await this.supabase
       .from("api_key_status")
       .select("key_name, exhausted_at, reset_at")
@@ -89,10 +87,10 @@ export class YelpKeyPool {
     this.loaded = true;
 
     const available = this.keys.filter((k) => !k.exhausted).length;
-    console.log(`[YelpKeyPool] loaded ${this.keys.length} keys, ${available} available`);
+    console.log(`[yelp-pool] loaded ${this.keys.length} keys, ${available} available`);
     for (const k of this.keys) {
       if (k.exhausted) {
-        console.log(`[YelpKeyPool]   ${k.name} EXHAUSTED until ${k.resetAt?.toISOString()}`);
+        console.log(`[yelp-pool]   ${k.name} EXHAUSTED until ${k.resetAt?.toISOString()}`);
       }
     }
   }
@@ -105,7 +103,7 @@ export class YelpKeyPool {
       entry.exhausted = true;
       entry.resetAt = resetAt;
     }
-    console.warn(`[YelpKeyPool] marking ${keyName} EXHAUSTED status=${status} until=${resetAt.toISOString()}`);
+    console.warn(`[yelp-pool] marking ${keyName} EXHAUSTED status=${status} until=${resetAt.toISOString()}`);
     const { error } = await this.supabase.from("api_key_status").upsert(
       {
         provider: "yelp",
@@ -118,7 +116,7 @@ export class YelpKeyPool {
       },
       { onConflict: "key_name" },
     );
-    if (error) console.error(`[YelpKeyPool] failed to persist exhaustion for ${keyName}:`, error.message);
+    if (error) console.error(`[yelp-pool] failed to persist exhaustion for ${keyName}:`, error.message);
   }
 
   /** Get the first non-exhausted key, or null if all are exhausted. */
@@ -146,26 +144,22 @@ export class YelpKeyPool {
       // 401 = auth always means the key is bad. Rotate + persist.
       if (res.status === 401) {
         const body = await res.text();
-        console.warn(`[YelpKeyPool] ${key.name} got 401: ${body.slice(0, 200)}`);
+        console.warn(`[yelp-pool] ${key.name} got 401: ${body.slice(0, 200)}`);
         await this.markExhausted(key.name, res.status, body);
-        console.log(`[YelpKeyPool] rotating: will try next available key`);
         continue;
       }
 
       // 403 has TWO flavors:
-      //   Real key issues (TOKEN_INVALID/MISSING/REVOKED, VALIDATION_ERROR on auth) → key is dead
-      //   Per-business issues (BUSINESS_UNAVAILABLE, etc.) → key is fine, just this resource fails
-      // Only mark exhausted if the body indicates a key/auth-level problem.
+      //   Key-level (TOKEN_INVALID/MISSING/REVOKED, UNAUTHORIZED, FORBIDDEN_CLIENT) → key is dead
+      //   Per-resource (BUSINESS_UNAVAILABLE, etc.) → key is fine, just this resource fails
       if (res.status === 403) {
         const body = await res.text();
         const isKeyProblem = /TOKEN_INVALID|TOKEN_MISSING|TOKEN_REVOKED|UNAUTHORIZED|FORBIDDEN_CLIENT/i.test(body);
-        console.warn(`[YelpKeyPool] ${key.name} got 403 (${isKeyProblem ? "key-level" : "per-resource"}): ${body.slice(0, 200)}`);
+        console.warn(`[yelp-pool] ${key.name} got 403 (${isKeyProblem ? "key-level" : "per-resource"}): ${body.slice(0, 200)}`);
         if (isKeyProblem) {
           await this.markExhausted(key.name, res.status, body);
-          console.log(`[YelpKeyPool] rotating: will try next available key`);
           continue;
         }
-        // Per-resource 403 — key is healthy, return error to caller
         return {
           ok: false, status: 403, body,
           rateLimited: false, authError: false, keyName: key.name,
@@ -177,15 +171,14 @@ export class YelpKeyPool {
       //   TOO_MANY_REQUESTS_PER_SECOND → transient throttle → back off briefly + retry SAME key
       if (res.status === 429) {
         const body = await res.text();
-        const isDailyQuota = /ACCESS_LIMIT_REACHED/i.test(body);
         const isPerSecond = /TOO_MANY_REQUESTS_PER_SECOND/i.test(body);
-        console.warn(`[YelpKeyPool] ${key.name} got 429 (${isPerSecond ? "per-second" : isDailyQuota ? "daily" : "unknown"}): ${body.slice(0, 200)}`);
+        const isDailyQuota = /ACCESS_LIMIT_REACHED/i.test(body);
+        console.warn(`[yelp-pool] ${key.name} got 429 (${isPerSecond ? "per-second" : isDailyQuota ? "daily" : "unknown"}): ${body.slice(0, 200)}`);
         if (isPerSecond) {
           await new Promise((r) => setTimeout(r, 1500));
           continue;
         }
         await this.markExhausted(key.name, res.status, body);
-        console.log(`[YelpKeyPool] rotating: will try next available key`);
         continue;
       }
 
@@ -198,7 +191,7 @@ export class YelpKeyPool {
       }
 
       const data = await res.json();
-      console.log(`[YelpKeyPool] success: ${key.name} served request`);
+      console.log(`[yelp-pool] success: ${key.name} served request`);
       return {
         ok: true, status: 200, body: data,
         rateLimited: false, authError: false, keyName: key.name,
