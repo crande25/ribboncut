@@ -1,13 +1,18 @@
 import { useState } from "react";
-import { Sun, Moon, Smartphone, Leaf, Calendar, MapPin, DollarSign, Star } from "lucide-react";
+import { Leaf, MapPin, DollarSign, Star } from "lucide-react";
 import { CityChecklist } from "@/components/CityChecklist";
 import { InstallAppCard } from "@/components/InstallAppCard";
 import { PushNotificationsCard } from "@/components/PushNotificationsCard";
 import { ContactUsDialog } from "@/components/ContactUsDialog";
+import {
+  SettingsSection,
+  ChipMultiSelect,
+  ChipSingleSelect,
+} from "@/components/settings/SettingsPrimitives";
+import { ThemeSelector } from "@/components/settings/ThemeSelector";
+import { OpenedWithinControl } from "@/components/settings/OpenedWithinControl";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useDeviceId } from "@/hooks/useDeviceId";
-import { useTheme } from "@/hooks/useTheme";
-import { cn } from "@/lib/utils";
 
 const dietaryOptions = [
   { value: "vegan", label: "Vegan" },
@@ -15,20 +20,6 @@ const dietaryOptions = [
   { value: "gluten_free", label: "Gluten Free" },
   { value: "halal", label: "Halal" },
   { value: "kosher", label: "Kosher" },
-];
-
-const openedWithinUnits = [
-  { value: "days", label: "Days" },
-  { value: "weeks", label: "Weeks" },
-  { value: "months", label: "Months" },
-];
-
-const maxValues: Record<string, number> = { days: 365, weeks: 52, months: 12 };
-
-const themeOptions = [
-  { value: "system" as const, label: "Device Default", icon: Smartphone },
-  { value: "light" as const, label: "Light", icon: Sun },
-  { value: "dark" as const, label: "Dark", icon: Moon },
 ];
 
 const priceOptions = [
@@ -46,7 +37,6 @@ const ratingOptions = [
   { value: 4.5, label: "4.5+ ★" },
 ];
 
-
 export default function Settings() {
   const [selectedCities, setSelectedCities] = useLocalStorage<string[]>("selected_cities", []);
   const [dietaryFilters, setDietaryFilters] = useLocalStorage<string[]>("dietary_filters", []);
@@ -55,11 +45,9 @@ export default function Settings() {
   const [, setMinRating] = useLocalStorage<number>("min_rating", 0);
   const [openedWithinValue, setOpenedWithinValue] = useLocalStorage<number>("opened_within_value", 1);
   const [openedWithinUnit, setOpenedWithinUnit] = useLocalStorage<string>("opened_within_unit", "months");
-  
-  const [rawInput, setRawInput] = useState<string>(String(openedWithinValue));
+
   const [contactOpen, setContactOpen] = useState(false);
   const deviceId = useDeviceId();
-  const { theme, setTheme } = useTheme();
 
   const hasAnyFilter =
     selectedCities.length > 0 ||
@@ -75,11 +63,17 @@ export default function Settings() {
     setDietaryFilters([]);
   };
 
-  const currentMax = maxValues[openedWithinUnit] || 12;
-  const parsedRaw = parseInt(rawInput);
-  const validationError = isNaN(parsedRaw) || parsedRaw > currentMax
-    ? `Max is ${currentMax} ${openedWithinUnit}`
-    : null;
+  const togglePrice = (v: number) =>
+    setPriceFilters((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
+
+  const toggleDietary = (v: string) =>
+    setDietaryFilters((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
+
+  const setRating = (v: number | null) => {
+    const next = v === null ? [] : [v];
+    setRatingThresholds(next);
+    setMinRating(next.length > 0 ? next[0] : 0);
+  };
 
   return (
     <div className="space-y-8">
@@ -99,213 +93,53 @@ export default function Settings() {
       </div>
 
       <InstallAppCard />
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <MapPin className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Your Locations</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Select the SE Michigan areas you want to track.
-        </p>
+
+      <SettingsSection
+        icon={MapPin}
+        title="Your Locations"
+        description="Select the SE Michigan areas you want to track."
+      >
         <CityChecklist selectedCities={selectedCities} onCitiesChange={setSelectedCities} />
-      </section>
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <DollarSign className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Price Range</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Pick the price tiers you're into. No selection = all prices.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {priceOptions.map((opt) => {
-            const isSelected = priceFilters.includes(opt.value);
-            return (
-              <button
-                key={opt.value}
-                onClick={() =>
-                  setPriceFilters((prev) =>
-                    isSelected
-                      ? prev.filter((v) => v !== opt.value)
-                      : [...prev, opt.value]
-                  )
-                }
-                className={cn(
-                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                  isSelected
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                )}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+      <SettingsSection
+        icon={DollarSign}
+        title="Price Range"
+        description="Pick the price tiers you're into. No selection = all prices."
+      >
+        <ChipMultiSelect options={priceOptions} selected={priceFilters} onToggle={togglePrice} />
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Star className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Minimum Rating</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Pick one threshold, or none for no rating filter.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {ratingOptions.map((opt) => {
-            const isSelected = ratingThresholds.includes(opt.value);
-            return (
-              <button
-                key={opt.value}
-                onClick={() => {
-                  const next = isSelected ? [] : [opt.value];
-                  setRatingThresholds(next);
-                  setMinRating(next.length > 0 ? next[0] : 0);
-                }}
-                className={cn(
-                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                  isSelected
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                )}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+      <SettingsSection
+        icon={Star}
+        title="Minimum Rating"
+        description="Pick one threshold, or none for no rating filter."
+      >
+        <ChipSingleSelect
+          options={ratingOptions}
+          selected={ratingThresholds[0] ?? null}
+          onChange={setRating}
+        />
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Leaf className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Dietary Requirements</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Filter results to match your dietary needs.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {dietaryOptions.map((opt) => {
-            const isSelected = dietaryFilters.includes(opt.value);
-            return (
-              <button
-                key={opt.value}
-                onClick={() =>
-                  setDietaryFilters((prev) =>
-                    isSelected
-                      ? prev.filter((v) => v !== opt.value)
-                      : [...prev, opt.value]
-                  )
-                }
-                className={cn(
-                  "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                  isSelected
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                )}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+      <SettingsSection
+        icon={Leaf}
+        title="Dietary Requirements"
+        description="Filter results to match your dietary needs."
+      >
+        <ChipMultiSelect options={dietaryOptions} selected={dietaryFilters} onToggle={toggleDietary} />
+      </SettingsSection>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Opened Within</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Only show places first spotted in the last…
-        </p>
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <input
-              type="number"
-              min={1}
-              max={currentMax}
-              value={rawInput}
-              onChange={(e) => {
-                setRawInput(e.target.value);
-                const v = parseInt(e.target.value);
-                if (!isNaN(v) && v >= 1 && v <= currentMax) {
-                  setOpenedWithinValue(v);
-                }
-              }}
-              onBlur={() => {
-                const v = Math.max(1, Math.min(currentMax, parsedRaw || 1));
-                setOpenedWithinValue(v);
-                setRawInput(String(v));
-              }}
-              className={cn(
-                "w-16 rounded-lg border bg-secondary px-3 py-2 text-xs text-foreground text-center focus:outline-none focus:ring-2 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
-                validationError ? "border-destructive focus:ring-destructive" : "border-border focus:ring-primary"
-              )}
-            />
-            <div className="flex gap-2">
-              {openedWithinUnits.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => {
-                    setOpenedWithinUnit(opt.value);
-                    const max = maxValues[opt.value] || 12;
-                    if (openedWithinValue > max) {
-                      setOpenedWithinValue(max);
-                      setRawInput(String(max));
-                    }
-                  }}
-                  className={cn(
-                    "rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                    openedWithinUnit === opt.value
-                      ? "bg-primary text-primary-foreground shadow-md"
-                      : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                  )}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {validationError && (
-            <p className="text-xs text-destructive">{validationError}</p>
-          )}
-        </div>
-      </section>
+      <OpenedWithinControl
+        value={openedWithinValue}
+        unit={openedWithinUnit}
+        onValueChange={setOpenedWithinValue}
+        onUnitChange={setOpenedWithinUnit}
+      />
 
       <PushNotificationsCard />
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Sun className="h-4 w-4 text-primary" />
-          <h2 className="text-sm font-semibold text-foreground">Appearance</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Choose your vibe — light, dark, or match your device.
-        </p>
-        <div className="flex gap-2">
-          {themeOptions.map((opt) => {
-            const Icon = opt.icon;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => setTheme(opt.value)}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium transition-all no-select",
-                  theme === opt.value
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+      <ThemeSelector />
 
       <div className="pt-2 text-center">
         <button
