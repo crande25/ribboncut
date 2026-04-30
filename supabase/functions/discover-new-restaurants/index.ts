@@ -610,7 +610,7 @@ Deno.serve(async (req) => {
     // Inline vibe-fill: generate vibes for sightings inserted IN THIS RUN only.
     // Existing sightings keep their cached vibe (refreshed by the periodic
     // refresh-metrics job, not here).
-    let vibeFill = { processed: 0, ok: 0, failed: 0 };
+    const vibeFill = { processed: 0, ok: 0, failed: 0 };
     try {
       const { data: cachedVibes } = await supabase
         .from("atmosphere_cache")
