@@ -1,5 +1,5 @@
-import { useTheme } from "@/hooks/useTheme";
-import { Toaster as Sonner, toast } from "sonner";
+import { useTheme } from "@/hooks/themeContext";
+import { Toaster as Sonner } from "sonner";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
@@ -24,4 +24,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
   );
 };
 
-export { Toaster, toast };
+export { Toaster };
+// Re-export `toast` from sonner directly to keep this file component-only
+// (Fast Refresh requires it). Consumers should `import { toast } from "sonner"`.
+

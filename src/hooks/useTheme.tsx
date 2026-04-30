@@ -1,13 +1,9 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ThemeContext, type Theme } from "./themeContext";
 
-export type Theme = "dark" | "light" | "system";
-
-interface ThemeContextValue {
-  theme: Theme;
-  setTheme: (theme: Theme) => void;
-}
-
-const ThemeContext = createContext<ThemeContextValue>({ theme: "system", setTheme: () => {} });
+// This file intentionally exports ONLY the ThemeProvider component so Vite
+// Fast Refresh can hot-reload it. Consumers should import the `useTheme`
+// hook and `Theme` type from `@/hooks/themeContext` directly.
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
@@ -48,5 +44,3 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     </ThemeContext.Provider>
   );
 }
-
-export const useTheme = () => useContext(ThemeContext);
