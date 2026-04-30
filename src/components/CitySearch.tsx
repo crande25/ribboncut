@@ -89,7 +89,9 @@ export function CitySearch({ selectedCities, onCitiesChange }: CitySearchProps) 
           if (label) {
             addCity(label);
           }
-        } catch {}
+        } catch {
+          // Reverse-geocode failed; user can pick a city manually.
+        }
         setLocating(false);
       },
       () => setLocating(false),
