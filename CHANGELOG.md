@@ -23,7 +23,9 @@ Categories used:
   - Replaced 8 `any` casts in frontend code (`useInstallPrompt`, `usePushNotifications`) with precise structural types (`Window & { MSStream?: unknown }`, `Navigator & { standalone?: boolean }`, `{ error?: string }`) — preserves runtime behavior, restores type-safety on browser APIs.
   - Fleshed out an empty `catch {}` in `CitySearch.tsx` with an explanatory comment so it no longer trips `no-empty`.
   - **Scoped `@typescript-eslint/no-explicit-any` off for `supabase/functions/**`** in `eslint.config.js`. Edge functions deal with untyped third-party API responses (Yelp, Google Places, Resend, web-push) where `any` is the pragmatic boundary type. Frontend code (`src/`) keeps the rule strict.
-- Two `react-refresh/only-export-components` warnings remain (in `ui/sonner.tsx` and `useTheme.tsx`); these are non-blocking dev-experience hints from shadcn-style files that legitimately co-export hooks alongside components.
+- **Cleared remaining `react-refresh/only-export-components` warnings** so the dev console is fully clean (0 errors / 0 warnings):
+  - Extracted `ThemeContext` + `useTheme` hook + `Theme` type from `src/hooks/useTheme.tsx` into a new `src/hooks/themeContext.ts`. The `.tsx` file now exports only the `ThemeProvider` component, which lets Vite Fast Refresh hot-reload it without losing state. Updated `ThemeSelector` and `ui/sonner` to import the hook from `@/hooks/themeContext`.
+  - Removed the `toast` re-export from `src/components/ui/sonner.tsx` so it's component-only. Consumers already import `toast` directly from `"sonner"`.
 
 ## 2026-04-30
 
