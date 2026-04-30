@@ -17,6 +17,16 @@ Categories used:
 ## 2026-04-30
 
 ### Fixed
+- **Discovery cron auth (root cause of zero-discovery nights)** — `discover-new-restaurants` was rejecting every nightly invocation with `403 Forbidden`. The handler did exact string-equality between the bearer token and the runtime `SUPABASE_SERVICE_ROLE_KEY` env var, but the cron job had a hardcoded service-role JWT that no longer matched after a key rotation. Switched to gateway-verified JWT (`verify_jwt = true` in `supabase/config.toml`) plus a `claims.role === 'service_role'` check in the handler — same pattern as `process-email-queue`. The cron's existing JWT now works again and remains valid across future rotations.
+
+### Changed
+- Ran a one-off discovery scan across all 20 SE Michigan cities for the past 7 days using only `YELP_API_KEY_3` (keys 1 and 2 were temporarily marked exhausted in `api_key_status` and restored after). Result: 129 new restaurant sightings inserted across every city.
+
+---
+
+## 2026-04-30
+
+### Fixed
 - **Nightly harvest**: Rescheduled `discover-new-restaurants-daily` cron from `0 6 * * *` UTC (≈2am ET) to `30 8 * * *` UTC (30 min after Yelp's daily quota reset at 08:00 UTC / midnight Pacific). The previous schedule ran *before* Yelp's reset, so on days when keys were exhausted the harvest started with no usable Yelp keys and inserted zero sightings even though the cron reported success.
 
 ## 2026-04-30 (later)
