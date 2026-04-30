@@ -10,10 +10,19 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.process-email-queue]
-verify_jwt = true
+verify_jwt = false
 
 [functions.discover-new-restaurants]
-verify_jwt = true
+verify_jwt = false
+
+[functions.backfill-categories]
+verify_jwt = false
+
+[functions.send-push-notifications]
+verify_jwt = false
+
+[functions.sync-internal-cron-token]
+verify_jwt = false
 
 [functions.yelp-headers-probe]
 verify_jwt = true
