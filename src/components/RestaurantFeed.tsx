@@ -1,9 +1,46 @@
+import { useEffect, useRef, useState } from "react";
 import { RefreshCw, MapPin } from "lucide-react";
 import { RestaurantCard } from "./RestaurantCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PullToRefreshIndicator } from "./PullToRefreshIndicator";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { useRestaurantFeed, useInfiniteScrollSentinel } from "@/hooks/useRestaurantFeed";
+import { useLocalStorage } from "@/hooks/useLocalStorage";
+
+// Rotates one step per page load (mount). Order is fixed; index persists in
+// localStorage so refreshes/navigations advance through the list deterministically.
+const TAGLINE_PHRASES = [
+  "What just opened",
+  "Fresh out the kitchen",
+  "New doors opened",
+  "Cut the line",
+  "Taste it first",
+  "Be the first bite",
+  "New flavors just dropped",
+  "No old news",
+  "Skip the classics",
+  "Dine different",
+] as const;
+
+function useRotatingTagline() {
+  const [storedIndex, setStoredIndex] = useLocalStorage<number>("tagline_index", 0);
+  const safeIndex =
+    Number.isInteger(storedIndex) && storedIndex >= 0
+      ? storedIndex % TAGLINE_PHRASES.length
+      : 0;
+  // Lock the phrase for this mount so it doesn't visually swap when we
+  // advance the stored index for next time.
+  const [phrase] = useState(() => TAGLINE_PHRASES[safeIndex]);
+  const advancedRef = useRef(false);
+  useEffect(() => {
+    if (advancedRef.current) return; // guard StrictMode double-invoke in dev
+    advancedRef.current = true;
+    setStoredIndex((safeIndex + 1) % TAGLINE_PHRASES.length);
+    // Run once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return phrase;
+}
 
 export function RestaurantFeed() {
   const {
@@ -16,6 +53,8 @@ export function RestaurantFeed() {
     loadMore,
     refresh,
   } = useRestaurantFeed();
+
+  const tagline = useRotatingTagline();
 
   const sentinelRef = useInfiniteScrollSentinel(loadMore);
 
@@ -37,7 +76,7 @@ export function RestaurantFeed() {
       <div className="flex flex-col items-center gap-2 py-6 text-center">
         <h1 className="text-4xl font-bold tracking-tight text-primary">RibbonCut</h1>
         <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-          What just opened
+          {tagline}
         </p>
       </div>
 
