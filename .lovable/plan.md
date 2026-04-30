@@ -1,33 +1,59 @@
-## Rotating tagline under "RibbonCut"
+## The actual problem
 
-Replace the static "What just opened" line in `src/components/RestaurantFeed.tsx` with a tagline that rotates through a fixed list on each page load (initial mount, navigation back to `/`, or full refresh). Order is deterministic — always cycles in the same sequence, starting from where it left off last time.
+`discover-new-restaurants` authenticates callers by **string-comparing** the bearer token to the runtime `SUPABASE_SERVICE_ROLE_KEY` env var:
 
-### Phrase list (in rotation order)
+```ts
+const authorized = token.length > 0 && token === SUPABASE_SERVICE_ROLE_KEY;
+```
 
-1. WHAT JUST OPENED *(current — stays first)*
-2. FRESH OUT THE KITCHEN
-3. NEW DOORS OPENED
-4. CUT THE LINE
-5. TASTE IT FIRST
-6. BE THE FIRST BITE
-7. NEW FLAVORS JUST DROPPED
-8. NO OLD NEWS
-9. SKIP THE CLASSICS
-10. DINE DIFFERENT
+The cron job (`discover-new-restaurants-daily`, jobid 41) has a service-role JWT **hardcoded** into its `net.http_post` headers. When Lovable Cloud rotated the project's service role key, the runtime env var changed but the cron's hardcoded JWT did not — so every nightly invocation now returns `403 Forbidden` before doing any work. Edge logs confirm: only `[discover] forbidden` lines, zero `[discover] starting scan` lines for recent runs.
 
-### How it works
+This — not Yelp key exhaustion — is why no restaurants have been added recently. The Yelp pool issue is real but secondary; the function never even reaches the Yelp call.
 
-- Persist an integer index in `localStorage` under `tagline_index` using the existing `useLocalStorage` hook.
-- On `RestaurantFeed` mount, read the current index, display `PHRASES[index]`, then write `(index + 1) % PHRASES.length` so the next page load shows the next phrase.
-- The advance happens once per mount inside a `useEffect` with an empty dep array (guarded by a ref so React 18 StrictMode double-invoke in dev doesn't skip a phrase).
-- First-ever visit defaults to index `0` → "WHAT JUST OPENED", matching today's behavior.
+The vault entry `email_queue_service_role_key` is also stale, so re-pointing the cron at the vault won't help either.
 
-### Files
+## The fix
 
-- `src/components/RestaurantFeed.tsx` — add `PHRASES` constant, small `useRotatingTagline` logic (or inline `useEffect`), swap the hardcoded string in the header `<p>`.
+Adopt the same pattern `process-email-queue` already uses successfully:
 
-### Non-goals / preserved behavior
+1. Set `verify_jwt = true` on the function in `supabase/config.toml`. The Supabase gateway will validate the JWT signature against the project's JWKS **before** the handler runs. Any forged token is rejected at the edge.
+2. In the handler, replace the brittle string-equality check with a parsed-claims check: accept the request only if `claims.role === 'service_role'`. Because the gateway has already verified the signature, trusting the `role` claim is safe — this is exactly what `process-email-queue` does.
+3. No changes needed to the cron job, the vault, or any keys. The hardcoded JWT in the cron is a valid, signed service-role JWT — it just stopped matching the rotated env var. With signature-based verification, it works again.
 
-- No animation/fade — just a different string per load (matches request: "rotate on page load").
-- No changes to data fetching, styling, or layout. Same `text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground` classes.
-- No backend changes.
+## Why this is the right fix (vs. alternatives)
+
+- **Re-storing the current service role key in vault** — would work today but breaks again on the next key rotation. Same fragility, just postponed.
+- **Adding a separate ad-hoc admin token** — extra secret to manage, doesn't fix the nightly cron, and we'd still have the long-term rotation problem.
+- **Switching to gateway JWT verification** — matches the existing `process-email-queue` pattern, survives future key rotations, and removes the stale-token failure mode permanently.
+
+## Plan of work
+
+1. **Patch `supabase/functions/discover-new-restaurants/index.ts`**
+   - Remove the `token === SUPABASE_SERVICE_ROLE_KEY` check.
+   - Add a `parseJwtClaims` helper (copy the one already used in `process-email-queue`) and require `claims.role === 'service_role'`.
+   - Update the comment block above the auth check to reflect the new model (gateway verifies signature; handler checks role).
+   - Keep using `SUPABASE_SERVICE_ROLE_KEY` for the `createClient` call — that part is fine.
+
+2. **Update `supabase/config.toml`**
+   - Add a `[functions.discover-new-restaurants]` block with `verify_jwt = true`.
+
+3. **Verify end-to-end**
+   - Deploy the function.
+   - Manually trigger via `net.http_post` using the cron's existing hardcoded JWT and confirm a `[discover] starting scan` log line appears.
+   - Re-run the on-demand "last 7 days, key 3 only" discovery you originally asked for: I'll temporarily mark `YELP_API_KEY` and `YELP_API_KEY_2` as exhausted, fire three chunks (8 / 8 / 4 cities) sequentially with `days=7`, then restore the key states.
+
+4. **CHANGELOG**
+   - Append a dated entry covering: root-cause of recent zero-discovery nights (stale hardcoded JWT vs. rotated runtime key), the move to gateway-verified JWT, and the one-off backfill scan.
+
+## Files touched
+
+- `supabase/functions/discover-new-restaurants/index.ts` — auth check rewrite
+- `supabase/config.toml` — add `verify_jwt = true` for this function
+- `CHANGELOG.md` — dated entry
+- DB (no schema change): temporary `api_key_status` rows toggled and reverted around the manual scan
+
+## Out of scope
+
+- Rotating the cron's hardcoded JWT to something fresher — not needed; signature-based verification makes the existing one valid indefinitely (until the JWT itself expires in 2036 per the embedded `exp` claim).
+- Touching `process-email-queue` / `send-push-notifications` / other functions — they already use the correct pattern or are not affected.
+- The earlier monthly-vs-daily Yelp reset window discussion — still a real issue, but tracked separately; not part of this fix.
