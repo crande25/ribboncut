@@ -22,6 +22,9 @@ Categories used:
 ### Changed
 - Ran a one-off discovery scan across all 20 SE Michigan cities for the past 7 days using only `YELP_API_KEY_3` (keys 1 and 2 were temporarily marked exhausted in `api_key_status` and restored after). Result: 129 new restaurant sightings inserted across every city.
 
+### Added
+- **Yelp API key 4** — added `YELP_API_KEY_4` secret. Picked up automatically by the existing `YelpKeyPool` env-var scan (`YELP_API_KEY_2`…`YELP_API_KEY_20`); no code changes required. Keys 3 and 4 both currently active and available.
+
 ---
 
 ## 2026-04-30
