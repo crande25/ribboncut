@@ -14,7 +14,19 @@ Categories used:
 
 ---
 
+## 2026-04-30 (later)
+
+### Security
+- **Neutralized leaked service_role JWT** — the migration file `20260430164028_*.sql` and three pg_cron job commands (`discover-new-restaurants-daily`, `send-push-notifications-hourly`, `nightly-backfill-categories`) carried hardcoded service-role / anon JWTs. We can't rotate the project's JWT signing keys ourselves, so the leaked token can't be cryptographically invalidated. Instead, we made it worthless against this project's edge functions:
+  - Introduced `INTERNAL_CRON_TOKEN`, a 96-char random shared secret stored in **both** Lovable Cloud secrets (for edge-function runtime access) and `vault.secrets` (for pg_cron access). Synced via the new one-shot `sync-internal-cron-token` edge function and the SECURITY DEFINER `public.set_internal_cron_token(text)` RPC (service_role-only EXECUTE).
+  - Replaced auth checks in `discover-new-restaurants`, `backfill-categories`, `send-push-notifications`, and `process-email-queue` with constant-time comparison against `INTERNAL_CRON_TOKEN` via the new `_shared/internalAuth.ts` helper. Removed the now-pointless `verify_jwt = true` from those functions in `supabase/config.toml`.
+  - Rescheduled all four cron jobs to fetch the token from `vault.decrypted_secrets` at runtime — `cron.job.command` no longer contains any JWT.
+  - Scrubbed `supabase/migrations/20260430164028_76a11904-d32c-46fb-8eb1-3c1b5b2f0ea1.sql` to a comment-only stub.
+  - Verified: leaked JWT → `discover-new-restaurants` returns **403**; new token → `send-push-notifications` returns **200**.
+  - **Residual risk:** the leaked JWT remains in git history and is still cryptographically valid until 2034. Direct PostgREST/SQL access via the JWT is blocked by RLS on every public table (verified). To fully invalidate the JWT, contact Lovable support to rotate the project's signing keys.
+
 ## 2026-04-30
+
 
 ### Fixed
 - **Discovery cron auth (root cause of zero-discovery nights)** — `discover-new-restaurants` was rejecting every nightly invocation with `403 Forbidden`. The handler did exact string-equality between the bearer token and the runtime `SUPABASE_SERVICE_ROLE_KEY` env var, but the cron job had a hardcoded service-role JWT that no longer matched after a key rotation. Switched to gateway-verified JWT (`verify_jwt = true` in `supabase/config.toml`) plus a `claims.role === 'service_role'` check in the handler — same pattern as `process-email-queue`. The cron's existing JWT now works again and remains valid across future rotations.
