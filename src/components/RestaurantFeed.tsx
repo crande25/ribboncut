@@ -54,6 +54,8 @@ export function RestaurantFeed() {
     refresh,
   } = useRestaurantFeed();
 
+  const tagline = useRotatingTagline();
+
   const sentinelRef = useInfiniteScrollSentinel(loadMore);
 
   const { containerRef, pullDistance, refreshing: pullRefreshing, isPastThreshold } =
