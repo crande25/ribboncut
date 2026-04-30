@@ -368,6 +368,10 @@ export type Database = {
           read_ct: number
         }[]
       }
+      set_internal_cron_token: {
+        Args: { new_token: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
