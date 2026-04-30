@@ -344,9 +344,8 @@ async function verifyOnYelp(
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  const preflight = handleOptions(req);
+  if (preflight) return preflight;
 
   const startedAt = Date.now();
 
@@ -354,9 +353,7 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return new Response(JSON.stringify({ error: "Missing supabase env" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "Missing supabase env" }, 500);
     }
 
     // Restrict callers: only requests bearing the exact service role key
@@ -367,15 +364,14 @@ Deno.serve(async (req) => {
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
     const authorized = token.length > 0 && token === SUPABASE_SERVICE_ROLE_KEY;
     if (!authorized) {
-      console.log("forbidden: missing or non-service-role token");
-      return new Response(JSON.stringify({ error: "Forbidden" }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      console.log("[discover] forbidden: missing or non-service-role token");
+      return jsonResponse({ error: "Forbidden" }, 403);
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const pool = new YelpKeyPool(supabase);
     await pool.load();
+
 
     // Optional on-demand override: pipe-delimited city list (cities contain commas).
     // Accepts ?cities=Detroit,%20MI|Ann%20Arbor,%20MI  OR  JSON body { cities: [...], days?: 7 }
