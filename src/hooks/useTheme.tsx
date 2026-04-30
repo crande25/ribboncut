@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ThemeContext, type Theme } from "./themeContext";
 
-// Re-export hook + type so existing `@/hooks/useTheme` imports keep working.
-export { useTheme, type Theme } from "./themeContext";
+// This file intentionally exports ONLY the ThemeProvider component so Vite
+// Fast Refresh can hot-reload it. Consumers should import the `useTheme`
+// hook and `Theme` type from `@/hooks/themeContext` directly.
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {

@@ -1,5 +1,5 @@
 import { Sun, Moon, Smartphone } from "lucide-react";
-import { useTheme, type Theme } from "@/hooks/useTheme";
+import { useTheme, type Theme } from "@/hooks/themeContext";
 import { SettingsSection, ChipButton } from "./SettingsPrimitives";
 
 const themeOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
