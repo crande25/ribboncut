@@ -11,6 +11,7 @@
 //   body / query: { staleness_days?: 3, limit?: 500, dry_run?: false }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { checkInternalAuth } from "../_shared/internalAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -131,9 +132,8 @@ Deno.serve(async (req) => {
     }
 
     // Service-role-only gate.
-    const authHeader = req.headers.get("Authorization") ?? "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authorized = token.length > 0 && token === SUPABASE_SERVICE_ROLE_KEY;
+    const auth = checkInternalAuth(req);
+    const authorized = auth.ok;
     if (!authorized) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },

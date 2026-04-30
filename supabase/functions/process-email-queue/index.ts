@@ -1,5 +1,6 @@
 import { sendLovableEmail } from 'npm:@lovable.dev/email-js'
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { checkInternalAuth } from '../_shared/internalAuth.ts'
 
 const MAX_RETRIES = 5
 const DEFAULT_BATCH_SIZE = 10
@@ -91,23 +92,12 @@ Deno.serve(async (req) => {
     )
   }
 
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) {
+  // Auth: INTERNAL_CRON_TOKEN shared secret (replaces previous service_role JWT check).
+  const auth = checkInternalAuth(req)
+  if (!auth.ok) {
     return new Response(
-      JSON.stringify({ error: 'Unauthorized' }),
-      { status: 401, headers: { 'Content-Type': 'application/json' } }
-    )
-  }
-
-  // Defense in depth: verify_jwt=true already requires a valid JWT at the
-  // gateway layer. This adds an explicit role check so only service-role
-  // callers can trigger queue processing.
-  const token = authHeader.slice('Bearer '.length).trim()
-  const claims = parseJwtClaims(token)
-  if (claims?.role !== 'service_role') {
-    return new Response(
-      JSON.stringify({ error: 'Forbidden' }),
-      { status: 403, headers: { 'Content-Type': 'application/json' } }
+      JSON.stringify(auth.body),
+      { status: auth.status, headers: { 'Content-Type': 'application/json' } }
     )
   }
 
