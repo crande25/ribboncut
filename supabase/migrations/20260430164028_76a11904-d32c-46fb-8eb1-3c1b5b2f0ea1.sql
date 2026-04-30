@@ -1,8 +1,15 @@
-SELECT net.http_post(
-    url := 'https://dcvgzkhoxlvtynlnxsdw.supabase.co/functions/v1/discover-new-restaurants?chunk=0&chunk_size=8&days=7',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjdmd6a2hveGx2dHlubG54c2R3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjE4NDcxNiwiZXhwIjoyMDkxNzYwNzE2fQ.QVom_ETFBpwM4qRnjb0n83ekxHMMXuIiVLjdRcDGH-c'
-    ),
-    body := '{}'::jsonb
-  ) AS request_id;
+-- This file previously contained a one-off net.http_post invocation with a
+-- hardcoded service_role JWT in the Authorization header. The token was
+-- leaked into git history.
+--
+-- As of 2026-04-30, that JWT no longer authenticates against any of our
+-- edge functions: cron-triggered functions now require the
+-- INTERNAL_CRON_TOKEN shared secret (stored in Vault, rotatable on demand)
+-- via supabase/functions/_shared/internalAuth.ts.
+--
+-- The leaked JWT remains valid as a signed token (we cannot rotate the
+-- project's signing keys ourselves), but direct PostgREST/SQL access via
+-- the JWT is blocked by Row-Level Security on every public table.
+--
+-- See CHANGELOG.md (2026-04-30) for the full remediation.
+SELECT 1;

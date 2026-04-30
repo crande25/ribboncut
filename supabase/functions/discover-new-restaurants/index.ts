@@ -12,6 +12,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { YelpKeyPool } from "../_shared/yelpKeyPool.ts";
 import { jsonResponse, handleOptions } from "../_shared/http.ts";
+import { checkInternalAuth } from "../_shared/internalAuth.ts";
 
 // Inline copy — edge functions can't import from src/
 const SE_MICHIGAN_CITIES = [
@@ -373,28 +374,14 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Missing supabase env" }, 500);
     }
 
-    // Restrict callers: only service-role JWTs are allowed.
-    //
-    // The function is configured with `verify_jwt = true` in supabase/config.toml,
-    // so the Supabase gateway has already validated the JWT signature against the
-    // project JWKS before this handler runs. That makes it safe to trust the
-    // `role` claim here without re-verifying the signature ourselves.
-    //
-    // We deliberately do NOT compare the token to the runtime
-    // SUPABASE_SERVICE_ROLE_KEY env var — that string changes whenever the key is
-    // rotated, which would silently break long-lived callers (like pg_cron jobs
-    // with hardcoded JWTs) even though their tokens remain cryptographically
-    // valid.
-    const authHeader = req.headers.get("Authorization") ?? "";
-    if (!authHeader.toLowerCase().startsWith("bearer ")) {
-      console.log("[discover] unauthorized: missing bearer token");
-      return jsonResponse({ error: "Unauthorized" }, 401);
-    }
-    const token = authHeader.slice("bearer ".length).trim();
-    const claims = parseJwtClaims(token);
-    if (claims?.role !== "service_role") {
-      console.log("[discover] forbidden: token role is not service_role");
-      return jsonResponse({ error: "Forbidden" }, 403);
+    // Restrict callers: only requests bearing the INTERNAL_CRON_TOKEN are allowed.
+    // This replaces the previous service_role-JWT check, which couldn't be
+    // invalidated without rotating the project's JWT signing keys. The shared
+    // secret lives in Vault + the runtime env and can be rotated at will.
+    const auth = checkInternalAuth(req);
+    if (!auth.ok) {
+      console.log("[discover] auth rejected", auth.status);
+      return jsonResponse(auth.body, auth.status);
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);

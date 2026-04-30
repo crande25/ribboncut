@@ -2,6 +2,7 @@
 // is due and they have new restaurants in their selected cities, send a push.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendWebPush } from "../_shared/webpush.ts";
+import { checkInternalAuth } from "../_shared/internalAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -78,15 +79,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Authorize: only requests bearing the exact service role key.
-    // Do NOT decode JWT payloads without signature verification — that allows
-    // attackers to forge an unsigned token claiming role=service_role.
-    const authHeader = req.headers.get("Authorization") ?? "";
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    const authorized = token.length > 0 && token === SUPABASE_SERVICE_ROLE_KEY;
-    if (!authorized) {
-      return new Response(JSON.stringify({ error: "Forbidden" }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Authorize via INTERNAL_CRON_TOKEN (constant-time compare against Vault-backed shared secret).
+    const auth = checkInternalAuth(req);
+    if (!auth.ok) {
+      return new Response(JSON.stringify(auth.body), {
+        status: auth.status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
