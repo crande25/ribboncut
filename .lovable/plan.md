@@ -1,57 +1,54 @@
-# Sync Lockfiles + Apply Minor/Patch Updates
-
 ## Goal
+Upgrade `vite` from `^5.4.21` to `^8.0.10` (skipping v6 and v7 entirely — three majors at once).
 
-1. Resolve Dependabot drift by getting `package-lock.json` back in sync with `package.json` (currently pins `flatted@3.3.1` instead of `^3.4.2`).
-2. Apply all available **minor and patch** updates to dependencies. **No major version bumps.**
-3. Regenerate `bun.lockb` in the same commit so both lockfiles stay aligned (Option B from the previous discussion).
+## Why this is medium-risk
+Vite 5 → 8 crosses three major versions. Breaking changes accumulated across them include:
+- **Node.js minimum** raised (v8 requires Node 20.19+ / 22.12+). Lovable's build environment supports this.
+- **Rollup 4 → Rollup 5** internals (v7).
+- **Default browser target** raised (`baseline-widely-available`) — modern browsers only.
+- **Sass legacy API removed**, **CJS Node API removed** (we use neither — config is ESM, no Sass).
+- **HMR API changes** and some plugin hook signature tweaks.
+
+Our `vite.config.ts` is simple (server config + 3 plugins + alias/dedupe). No custom Rollup config, no legacy APIs. Risk surface is mostly the plugins keeping up.
+
+## Coordinated peer bumps required
+Vite 8 needs newer peers. From `npm-check-updates`:
+
+| Package | Current | Target | Notes |
+|---|---|---|---|
+| `vite` | ^5.4.21 | ^8.0.10 | main bump |
+| `@vitejs/plugin-react-swc` | ^3.11.0 | ^4.3.0 | v4 required for Vite 7+ peer range |
+| `vite-plugin-pwa` | ^1.2.0 | ^1.2.0 | already supports Vite 7/8 in peerDeps |
+| `vitest` | ^3.2.4 | ^3.2.4 | keep on v3 (v4 is its own major; defer) |
+| `lovable-tagger` | (managed) | (managed) | Lovable-controlled, should track Vite |
 
 ## Steps
 
-### 1. Refresh `package-lock.json` with current `package.json` ranges
-Run npm in lockfile-only mode so it re-resolves every dependency to the highest version allowed by the existing `^` ranges, without touching `node_modules` or running install scripts:
+1. Update `package.json`:
+   - `vite`: `^8.0.10`
+   - `@vitejs/plugin-react-swc`: `^4.3.0`
+   - Leave `vite-plugin-pwa`, `vitest`, `lovable-tagger` as-is.
 
-```
-npm install --package-lock-only --ignore-scripts
-```
+2. Regenerate lockfiles:
+   - `npm install --package-lock-only` (refresh `package-lock.json`)
+   - `bun install` (refresh `bun.lock`)
 
-This alone will pull in `flatted@3.4.2+` and any other in-range patches that have been published since the lockfile was last generated, closing Dependabot PR #7 automatically.
+3. Verify `vite.config.ts` still loads — no API changes needed for what we use (`defineConfig`, `server`, `plugins`, `resolve.alias`, `resolve.dedupe`). The PWA plugin config (`registerType`, `workbox.globPatterns`, `manifest: false`) is unchanged across PWA plugin v1.x.
 
-### 2. Apply minor/patch updates to `package.json`
-Use `npm-check-updates` (via `npx`, no install) restricted to minor/patch only:
+4. Verify `vitest.config.ts` — vitest v3 stays on Vite 5/6/7/8 compat range; should work without edits.
 
-```
-npx --yes npm-check-updates -u --target minor
-```
+5. Run regression pass:
+   - Vitest suite (`vitest run`)
+   - Dev server boot (auto via Lovable preview) — watch for plugin peer warnings or HMR errors
+   - Manually verify `/` (Feed) and `/settings` render
+   - Check console for new errors
 
-`--target minor` upgrades both minor and patch versions but never crosses a major boundary. Then re-run step 1 to lock the new ranges:
+6. Update `CHANGELOG.md` with dated entry covering the Vite 5→8 jump and `@vitejs/plugin-react-swc` 3→4 bump.
 
-```
-npm install --package-lock-only --ignore-scripts
-```
+## Rollback plan
+If anything breaks (PWA build, SWC plugin, HMR), revert `package.json` + lockfiles to the prior pin and report back. No source code changes are part of this plan, so rollback is a clean lockfile revert.
 
-### 3. Regenerate `bun.lockb`
-```
-bun install
-```
-
-This rewrites the bun lockfile to match the updated `package.json`. Both lockfiles will then resolve identical versions.
-
-### 4. Verify
-- `grep '"flatted"' package-lock.json` → should show `3.4.x` (no `3.3.1` remnants).
-- Confirm no major version bumps occurred by diffing `package.json` major numbers before/after.
-- The harness will run the build automatically; if anything breaks, roll back the offending package individually.
-
-### 5. Commit
-Both `package.json`, `package-lock.json`, and `bun.lockb` go in the same commit. Append a CHANGELOG entry under today's date describing the dependency refresh and that it closes Dependabot PR #7.
-
-## What is explicitly out of scope
-
-- **No major version bumps.** Examples that will be skipped: `lucide-react` (0.462 → 0.x latest is fine since pre-1.0 minors are still treated as minors by ncu's `--target minor`), `date-fns` 3 → 4, `react-day-picker` 8 → 9, `tailwind-merge` 2 → 3, `vaul` 0.9 → 1.x, `react-resizable-panels` 2 → 3 if available, `embla-carousel-react` 8 → newer major, `vite` 5 → 7, `tailwindcss` 3 → 4, `jsdom` 20 → newer, `@types/node` 22 → 24, `globals` 15 → 16, etc. Any of these that have a newer major will be left alone.
-- No code refactors. Pure dependency hygiene.
-
-## Expected outcome
-
-- Dependabot PR #7 (`flatted`) auto-closes within minutes of the push to `main`.
-- All other in-range patches/minors picked up in the same sweep, so we don't immediately get new Dependabot PRs for the same class of drift.
-- `bun.lockb` and `package-lock.json` both resolve identical versions going forward — until the next manual sweep, which we should run anytime Dependabot opens a new PR.
+## Out of scope (deferring)
+- `vitest` v3 → v4 (separate major, its own breaking changes around config/reporters)
+- `eslint` v9 → v10, `typescript` 5.9 → 6.0 (previously deferred medium-risk batch)
+- React 19, Tailwind 4, React Router 7, Zod 4 (previously deferred high-risk)
