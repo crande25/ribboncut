@@ -1,54 +1,55 @@
-## Goal
-Upgrade `vite` from `^5.4.21` to `^8.0.10` (skipping v6 and v7 entirely — three majors at once).
 
-## Why this is medium-risk
-Vite 5 → 8 crosses three major versions. Breaking changes accumulated across them include:
-- **Node.js minimum** raised (v8 requires Node 20.19+ / 22.12+). Lovable's build environment supports this.
-- **Rollup 4 → Rollup 5** internals (v7).
-- **Default browser target** raised (`baseline-widely-available`) — modern browsers only.
-- **Sass legacy API removed**, **CJS Node API removed** (we use neither — config is ESM, no Sass).
-- **HMR API changes** and some plugin hook signature tweaks.
+# Admin Dashboard Plan
 
-Our `vite.config.ts` is simple (server config + 3 plugins + alias/dedupe). No custom Rollup config, no legacy APIs. Risk surface is mostly the plugins keeping up.
+## Approach
 
-## Coordinated peer bumps required
-Vite 8 needs newer peers. From `npm-check-updates`:
+A hidden `/admin` route with no links from the main UI. Non-admin users see nothing different. Admin access requires email/password login verified against a `user_roles` table.
 
-| Package | Current | Target | Notes |
-|---|---|---|---|
-| `vite` | ^5.4.21 | ^8.0.10 | main bump |
-| `@vitejs/plugin-react-swc` | ^3.11.0 | ^4.3.0 | v4 required for Vite 7+ peer range |
-| `vite-plugin-pwa` | ^1.2.0 | ^1.2.0 | already supports Vite 7/8 in peerDeps |
-| `vitest` | ^3.2.4 | ^3.2.4 | keep on v3 (v4 is its own major; defer) |
-| `lovable-tagger` | (managed) | (managed) | Lovable-controlled, should track Vite |
+## Database Changes
 
-## Steps
+1. **Create `user_roles` table** with enum `app_role` ('admin') and RLS using a `has_role` security-definer function (standard pattern from project guidelines).
+2. **Create a `profiles` table** (minimal: `id` FK to `auth.users`, `email`) with auto-create trigger on signup.
+3. **Seed your admin user** — you'll sign up via the admin login form, then I'll provide a migration to grant the admin role to your user ID.
 
-1. Update `package.json`:
-   - `vite`: `^8.0.10`
-   - `@vitejs/plugin-react-swc`: `^4.3.0`
-   - Leave `vite-plugin-pwa`, `vitest`, `lovable-tagger` as-is.
+## Auth
 
-2. Regenerate lockfiles:
-   - `npm install --package-lock-only` (refresh `package-lock.json`)
-   - `bun install` (refresh `bun.lock`)
+- Email/password signup+login on the `/admin` route itself (inline form, no global UI changes).
+- No auto-confirm — you verify email first.
+- Google OAuth optional (can add later).
+- No "admin" button in BottomNav or anywhere visible.
 
-3. Verify `vite.config.ts` still loads — no API changes needed for what we use (`defineConfig`, `server`, `plugins`, `resolve.alias`, `resolve.dedupe`). The PWA plugin config (`registerType`, `workbox.globPatterns`, `manifest: false`) is unchanged across PWA plugin v1.x.
+## Frontend
 
-4. Verify `vitest.config.ts` — vitest v3 stays on Vite 5/6/7/8 compat range; should work without edits.
+- **`/admin` route** — if not authenticated or not admin, shows a simple login form. If admin, shows the dashboard.
+- **`/admin` login form** — email + password, sign up / sign in toggle. Minimal, no branding clutter.
+- **Admin Dashboard tabs/sections:**
+  - **API Key Health** — calls `yelp-key-sanity-check` edge function, displays results.
+  - **Fire Discovery** — button to invoke `discover-new-restaurants` edge function with city picker.
+  - **Restaurant Stats** — query `restaurant_sightings` grouped by date, show daily new additions chart/table.
+  - **Errors/Logs** — display recent `api_key_status` errors and any edge function error summaries from the DB.
 
-5. Run regression pass:
-   - Vitest suite (`vitest run`)
-   - Dev server boot (auto via Lovable preview) — watch for plugin peer warnings or HMR errors
-   - Manually verify `/` (Feed) and `/settings` render
-   - Check console for new errors
+## Security
 
-6. Update `CHANGELOG.md` with dated entry covering the Vite 5→8 jump and `@vitejs/plugin-react-swc` 3→4 bump.
+- `user_roles` table has RLS; only service_role can write.
+- `has_role()` security-definer function prevents recursive RLS.
+- Admin dashboard queries use the authenticated user's session; edge function invocations go through the standard Supabase client (anon key + user JWT).
+- Edge functions that the admin triggers (sanity check, discovery) already use `verify_jwt = false` with internal auth — we'll add an alternate admin-auth path that checks the JWT's user has the admin role.
 
-## Rollback plan
-If anything breaks (PWA build, SWC plugin, HMR), revert `package.json` + lockfiles to the prior pin and report back. No source code changes are part of this plan, so rollback is a clean lockfile revert.
+## Files
 
-## Out of scope (deferring)
-- `vitest` v3 → v4 (separate major, its own breaking changes around config/reporters)
-- `eslint` v9 → v10, `typescript` 5.9 → 6.0 (previously deferred medium-risk batch)
-- React 19, Tailwind 4, React Router 7, Zod 4 (previously deferred high-risk)
+| File | Action |
+|------|--------|
+| Migration SQL | Create `app_role` enum, `user_roles`, `profiles`, `has_role()` fn, triggers, RLS |
+| `src/pages/Admin.tsx` | New page — login form + dashboard |
+| `src/components/admin/*` | ApiKeyHealth, DiscoveryRunner, RestaurantStats, ErrorLog components |
+| `src/hooks/useAdminAuth.ts` | Hook: check auth state + admin role |
+| `src/App.tsx` | Add `/admin` route |
+
+No changes to BottomNav, Index, Settings, or any public-facing component.
+
+## Technical Details
+
+- The `has_role` function queries `user_roles` with `SECURITY DEFINER` to avoid RLS recursion.
+- Admin check on the client: after login, call `supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' })`. If false, show "Access denied."
+- For triggering edge functions from admin UI, use `supabase.functions.invoke(...)` which includes the user's JWT automatically.
+- Discovery and sanity-check functions currently use `INTERNAL_CRON_TOKEN` auth. We'll add a secondary auth path: if `Authorization` header contains a valid Supabase JWT for an admin user, also allow the request. This keeps cron working as-is while enabling admin UI triggers.

@@ -14,7 +14,16 @@ Categories used:
 
 ---
 
-## 2026-05-01 (d)
+## 2026-05-01 (e)
+
+### Added
+- **Admin dashboard** at hidden `/admin` route — API key health, fire discoveries, restaurant stats, error log.
+- Role-based auth: `user_roles` table with `has_role()` security-definer function, `profiles` table with auto-create trigger.
+- No UX impact on non-admin users (no visible links or buttons).
+
+---
+
+
 
 ### Changed
 - **Discovery logging: `ALREADY-KNOWN` label for duplicate sightings.** When a candidate passes Yelp verification but its `yelp_id` already exists in `restaurant_sightings`, the log now emits `[db <city>] ALREADY-KNOWN` and the summary includes an `already_known` counter. Previously this case was silent and left `verified > inserted + skipped`, making logs hard to interpret.
