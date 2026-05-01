@@ -495,6 +495,7 @@ Deno.serve(async (req) => {
       candidates: number;
       verified: number;
       inserted: number;
+      already_known: number;
       skipped: number;
       error?: string;
     }> = [];
