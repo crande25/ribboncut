@@ -14,6 +14,13 @@ Categories used:
 
 ---
 
+## 2026-05-01 (d)
+
+### Changed
+- **Discovery logging: `ALREADY-KNOWN` label for duplicate sightings.** When a candidate passes Yelp verification but its `yelp_id` already exists in `restaurant_sightings`, the log now emits `[db <city>] ALREADY-KNOWN` and the summary includes an `already_known` counter. Previously this case was silent and left `verified > inserted + skipped`, making logs hard to interpret.
+
+---
+
 ## 2026-05-01 (c)
 
 ### Fixed

@@ -495,6 +495,7 @@ Deno.serve(async (req) => {
       candidates: number;
       verified: number;
       inserted: number;
+      already_known: number;
       skipped: number;
       error?: string;
     }> = [];
@@ -511,7 +512,7 @@ Deno.serve(async (req) => {
       // Initialize per-city result rows so cities with zero candidates still appear.
       const batchResults = new Map<string, typeof summary[number]>();
       for (const c of batch) {
-        batchResults.set(c, { city: c, candidates: 0, verified: 0, inserted: 0, skipped: 0 });
+        batchResults.set(c, { city: c, candidates: 0, verified: 0, inserted: 0, already_known: 0, skipped: 0 });
       }
 
       try {
@@ -641,7 +642,8 @@ Deno.serve(async (req) => {
               console.log(`[metrics ${cand.city}] cached yelp_id=${hit.yelp_id} price=${hit.priceLevel} rating=${hit.rating} reviews=${hit.reviewCount}`);
             }
           } else {
-            console.log(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — duplicate (already in restaurant_sightings); skipping metadata refresh`);
+            cityResult.already_known++;
+            console.log(`[db ${cand.city}] ALREADY-KNOWN yelp_id=${hit.yelp_id} "${hit.yelp_name}" — yelp_id already exists in restaurant_sightings, upsert ignored`);
           }
         }
 
