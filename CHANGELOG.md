@@ -17,7 +17,11 @@ Categories used:
 ## 2026-05-01
 
 ### Changed
-- **Discovery skips zero-review Yelp businesses.** Yelp's `/businesses/{id}` endpoint returns `403 BUSINESS_UNAVAILABLE` for any business with no reviews (a deterministic policy), so those would briefly appear in the feed with broken metadata before being lazy-tombstoned by `get-restaurants`. `discover-new-restaurants` now skips them at insert time so they never enter the feed at all (e.g., university dining halls like "South Quad Dining Hall" in Ann Arbor).
+- **Discovery probes Yelp detail endpoint for `BUSINESS_UNAVAILABLE`.** Reverted the earlier heuristic of skipping zero-review Yelp results — review count alone isn't a reliable availability signal and we want to keep low-review venues. After a candidate matches `/businesses/search`, `discover-new-restaurants` now does one `/businesses/{id}` probe per verified hit:
+  - **`403 BUSINESS_UNAVAILABLE`** → skip insert; if a sighting for that `yelp_id` already exists and isn't tombstoned, stamp `yelp_unavailable_at = now()` so it disappears from the feed.
+  - **Other non-OK statuses** (rate limit, 5xx, all keys exhausted) → skip insert this run; next discovery retries. Avoids inserting unverifiable rows.
+  - **OK** → insert as before, including 0-review venues.
+  - Lazy tombstoning in `get-restaurants/yelpEnrich.ts` is unchanged and still catches venues that go unavailable between discovery runs.
 
 ## 2026-04-30 (later)
 
