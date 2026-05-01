@@ -5,17 +5,18 @@ import { ApiKeyHealth } from "@/components/admin/ApiKeyHealth";
 import { DiscoveryRunner } from "@/components/admin/DiscoveryRunner";
 import { RestaurantStats } from "@/components/admin/RestaurantStats";
 import { ErrorLog } from "@/components/admin/ErrorLog";
+import { UserManagement } from "@/components/admin/UserManagement";
 
-const TABS = ["API Keys", "Discovery", "Stats", "Errors"] as const;
+const TABS = ["API Keys", "Discovery", "Stats", "Errors", "Users"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Admin() {
-  const { user, isAdmin, loading, signIn, signUp, signOut } = useAdminAuth();
+  const { user, isAdmin, loading, signIn, signOut } = useAdminAuth();
   const [tab, setTab] = useState<Tab>("Stats");
 
   if (loading) return <p className="pt-20 text-center text-muted-foreground">Loading…</p>;
 
-  if (!user) return <AdminLogin onSignIn={signIn} onSignUp={signUp} />;
+  if (!user) return <AdminLogin onSignIn={signIn} />;
 
   if (!isAdmin) {
     return (
@@ -33,7 +34,6 @@ export default function Admin() {
         <button onClick={signOut} className="text-xs text-muted-foreground underline">Sign out</button>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-2 border-b border-border pb-2">
         {TABS.map((t) => (
           <button
@@ -48,11 +48,11 @@ export default function Admin() {
         ))}
       </div>
 
-      {/* Content */}
       {tab === "API Keys" && <ApiKeyHealth />}
       {tab === "Discovery" && <DiscoveryRunner />}
       {tab === "Stats" && <RestaurantStats />}
       {tab === "Errors" && <ErrorLog />}
+      {tab === "Users" && <UserManagement currentUserId={user.id} />}
     </div>
   );
 }
