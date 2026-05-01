@@ -107,14 +107,20 @@ async function callGeminiGrounded(
         ? `${cityNames[0]} or ${cityNames[1]}`
         : `${cityNames.slice(0, -1).join(", ")}, or ${cityNames[cityNames.length - 1]}`;
 
-  const prompt = `Search for restaurants that are active in any capacity (including soft openings, permanent pop-up residencies, or preview phases) in ${cityPhrase} as of ${sevenDaysAgo} to ${today}. Do not restrict the list to 'officially' opened grand openings; include any business currently serving customers at a physical street address.
+  const prompt = `Search for restaurants that NEWLY OPENED (first opened their doors to customers) in ${cityPhrase} between ${sevenDaysAgo} and ${today}. This means the restaurant did not exist or was not serving customers before ${sevenDaysAgo}.
 
-Only include permanent locations that are currently fully operational. Exclude pop-ups, food trucks without a permanent address, planned/announced openings, and locations that have already closed.
+Include soft openings, grand openings, and preview/trial service periods — but ONLY if the restaurant started serving customers for the first time within this date range.
+
+EXCLUDE all of the following:
+- Established restaurants that have been open for months or years (e.g. chain restaurants like Applebee's, Chili's, McDonald's, etc. that have long existed at their current location)
+- Restaurants that merely renovated, rebranded, or changed ownership but were already operating at that address
+- Pop-ups, food trucks without a permanent address, planned/announced openings not yet serving customers, and locations that have already closed
+- Any restaurant you cannot confirm opened within the last 7 days from a credible source
 
 Return ONLY a JSON array, with no prose, no explanation, and no markdown code fencing. Each item must have exactly this shape:
 {"name": "Restaurant name", "address": "Street address, City, State", "city": "<one of the input cities, copied exactly as written above>"}
 
-If you find no qualifying restaurants in any of these cities, return exactly: []`;
+If you find no qualifying newly opened restaurants in any of these cities, return exactly: []`;
 
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
