@@ -642,7 +642,8 @@ Deno.serve(async (req) => {
               console.log(`[metrics ${cand.city}] cached yelp_id=${hit.yelp_id} price=${hit.priceLevel} rating=${hit.rating} reviews=${hit.reviewCount}`);
             }
           } else {
-            console.log(`[db ${cand.city}] NOT-INSERTED yelp_id=${hit.yelp_id} "${hit.yelp_name}" — duplicate (already in restaurant_sightings); skipping metadata refresh`);
+            cityResult.already_known++;
+            console.log(`[db ${cand.city}] ALREADY-KNOWN yelp_id=${hit.yelp_id} "${hit.yelp_name}" — yelp_id already exists in restaurant_sightings, upsert ignored`);
           }
         }
 
