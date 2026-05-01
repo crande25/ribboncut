@@ -14,6 +14,14 @@ Categories used:
 
 ---
 
+## 2026-05-01 (c)
+
+### Fixed
+- **False key exhaustion from `BUSINESS_UNAVAILABLE` 403s.** The inline `YelpKeyPool` in `backfill-categories` treated all 401/403 responses identically, marking keys exhausted even for per-resource `BUSINESS_UNAVAILABLE` errors. This caused all 4 keys to be flagged as exhausted when backfill hit a single unavailable business. Fixed to match the shared pool's logic: only key-level 403s (`TOKEN_INVALID`, `FORBIDDEN_CLIENT`, etc.) mark a key exhausted; per-resource errors are returned without rotation.
+- **Cleared false exhaustion flags** on all 4 Yelp API keys.
+
+---
+
 ## 2026-05-01 (b)
 
 ### Fixed
