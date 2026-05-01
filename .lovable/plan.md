@@ -1,55 +1,52 @@
 
-# Admin Dashboard Plan
+## Changes
 
-## Approach
+### 1. Strip signup from AdminLogin
+- Remove the `onSignUp` prop and signup mode toggle from `AdminLogin.tsx`
+- The form becomes sign-in only — no way for new users to self-register through `/admin`
+- Remove `signUp` usage from `Admin.tsx`
 
-A hidden `/admin` route with no links from the main UI. Non-admin users see nothing different. Admin access requires email/password login verified against a `user_roles` table.
+### 2. Add "Users" tab to admin dashboard
+- Add a new tab called **Users** to the dashboard
+- New component `src/components/admin/UserManagement.tsx`:
+  - Lists current admins (queries `user_roles` joined with `profiles`)
+  - **Grant admin** form: enter an email, look up their `user_id` in `profiles`, insert into `user_roles`
+  - **Revoke admin** button next to each admin (except yourself)
+- This requires the authenticated admin to be able to insert/delete from `user_roles`, so we need an RLS policy update
 
-## Database Changes
+### 3. Database migration
+- Add RLS policies on `user_roles` so that admins can **insert** and **delete** roles (using the existing `has_role()` function)
+- Add an RLS policy on `profiles` so admins can **read all profiles** (needed to look up a user by email when granting admin)
 
-1. **Create `user_roles` table** with enum `app_role` ('admin') and RLS using a `has_role` security-definer function (standard pattern from project guidelines).
-2. **Create a `profiles` table** (minimal: `id` FK to `auth.users`, `email`) with auto-create trigger on signup.
-3. **Seed your admin user** — you'll sign up via the admin login form, then I'll provide a migration to grant the admin role to your user ID.
+### Technical details
 
-## Auth
+**New RLS policies:**
+```sql
+-- Admins can grant roles
+CREATE POLICY "Admins can insert roles"
+  ON public.user_roles FOR INSERT
+  TO authenticated
+  WITH CHECK (public.has_role(auth.uid(), 'admin'));
 
-- Email/password signup+login on the `/admin` route itself (inline form, no global UI changes).
-- No auto-confirm — you verify email first.
-- Google OAuth optional (can add later).
-- No "admin" button in BottomNav or anywhere visible.
+-- Admins can revoke roles
+CREATE POLICY "Admins can delete roles"
+  ON public.user_roles FOR DELETE
+  TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'));
 
-## Frontend
+-- Admins can read all profiles (for email lookup)
+CREATE POLICY "Admins can read all profiles"
+  ON public.profiles FOR SELECT
+  TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'));
+```
 
-- **`/admin` route** — if not authenticated or not admin, shows a simple login form. If admin, shows the dashboard.
-- **`/admin` login form** — email + password, sign up / sign in toggle. Minimal, no branding clutter.
-- **Admin Dashboard tabs/sections:**
-  - **API Key Health** — calls `yelp-key-sanity-check` edge function, displays results.
-  - **Fire Discovery** — button to invoke `discover-new-restaurants` edge function with city picker.
-  - **Restaurant Stats** — query `restaurant_sightings` grouped by date, show daily new additions chart/table.
-  - **Errors/Logs** — display recent `api_key_status` errors and any edge function error summaries from the DB.
+**New admin must already have a Supabase auth account** (signed up elsewhere or created by you manually). The grant flow is: existing admin enters email → system looks up profile → inserts admin role.
 
-## Security
-
-- `user_roles` table has RLS; only service_role can write.
-- `has_role()` security-definer function prevents recursive RLS.
-- Admin dashboard queries use the authenticated user's session; edge function invocations go through the standard Supabase client (anon key + user JWT).
-- Edge functions that the admin triggers (sanity check, discovery) already use `verify_jwt = false` with internal auth — we'll add an alternate admin-auth path that checks the JWT's user has the admin role.
-
-## Files
-
-| File | Action |
-|------|--------|
-| Migration SQL | Create `app_role` enum, `user_roles`, `profiles`, `has_role()` fn, triggers, RLS |
-| `src/pages/Admin.tsx` | New page — login form + dashboard |
-| `src/components/admin/*` | ApiKeyHealth, DiscoveryRunner, RestaurantStats, ErrorLog components |
-| `src/hooks/useAdminAuth.ts` | Hook: check auth state + admin role |
-| `src/App.tsx` | Add `/admin` route |
-
-No changes to BottomNav, Index, Settings, or any public-facing component.
-
-## Technical Details
-
-- The `has_role` function queries `user_roles` with `SECURITY DEFINER` to avoid RLS recursion.
-- Admin check on the client: after login, call `supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' })`. If false, show "Access denied."
-- For triggering edge functions from admin UI, use `supabase.functions.invoke(...)` which includes the user's JWT automatically.
-- Discovery and sanity-check functions currently use `INTERNAL_CRON_TOKEN` auth. We'll add a secondary auth path: if `Authorization` header contains a valid Supabase JWT for an admin user, also allow the request. This keeps cron working as-is while enabling admin UI triggers.
+**Files changed:**
+- `src/components/admin/AdminLogin.tsx` — remove signup
+- `src/pages/Admin.tsx` — remove signUp prop, add Users tab
+- `src/components/admin/UserManagement.tsx` — new component
+- `src/hooks/useAdminAuth.ts` — can remove `signUp` export
+- Migration SQL — new RLS policies
+- `CHANGELOG.md`

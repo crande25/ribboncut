@@ -14,6 +14,17 @@ Categories used:
 
 ---
 
+## 2026-05-01 (f)
+
+### Changed
+- Removed self-signup from `/admin` — login only.
+
+### Added
+- **Users** tab in admin dashboard: list current admins, grant/revoke admin role by email.
+- RLS policies allowing admins to manage `user_roles` and look up profiles.
+
+---
+
 ## 2026-05-01 (e)
 
 ### Added
