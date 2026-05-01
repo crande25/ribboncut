@@ -17,6 +17,7 @@ Categories used:
 ## 2026-05-01
 
 ### Changed
+- **Dependency refresh (minor/patch only, no major bumps).** Resynced `package-lock.json` with `package.json` ranges (was pinning `flatted@3.3.1` despite `^3.4.2` in manifest, keeping Dependabot PR #7 open) and applied in-range minor/patch updates: `flatted` 3.3.1 → 3.4.2, `eslint-plugin-react-refresh` 0.4.26 → 0.5.2, `lovable-tagger` 1.2.0 → 1.3.0, `lucide-react` 0.462.0 → 0.577.0, `next-themes` 0.3.0 → 0.4.6, `postcss` 8.5.12 → 8.5.13. Regenerated `bun.lockb` in the same commit so both lockfiles resolve identical versions (Option B from the lockfile-strategy decision). Should auto-close Dependabot PR #7 once pushed to `main`.
 - **Discovery probes Yelp detail endpoint for `BUSINESS_UNAVAILABLE`.** Reverted the earlier heuristic of skipping zero-review Yelp results — review count alone isn't a reliable availability signal and we want to keep low-review venues. After a candidate matches `/businesses/search`, `discover-new-restaurants` now does one `/businesses/{id}` probe per verified hit:
   - **`403 BUSINESS_UNAVAILABLE`** → skip insert; if a sighting for that `yelp_id` already exists and isn't tombstoned, stamp `yelp_unavailable_at = now()` so it disappears from the feed.
   - **Other non-OK statuses** (rate limit, 5xx, all keys exhausted) → skip insert this run; next discovery retries. Avoids inserting unverifiable rows.
