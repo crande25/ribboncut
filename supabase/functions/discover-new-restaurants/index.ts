@@ -529,14 +529,43 @@ Deno.serve(async (req) => {
           cityResult.verified++;
           const hit = verify.hit;
 
-          // Skip 0-review businesses entirely. Yelp's /businesses/{id} endpoint
-          // returns 403 BUSINESS_UNAVAILABLE for any business without reviews
-          // (deterministic policy), so they'd just appear once in the feed with
-          // broken metadata before being lazy-tombstoned by get-restaurants.
-          // Don't insert them in the first place.
-          if (hit.reviewCount === 0 || hit.reviewCount === null) {
+          // Probe Yelp's detail endpoint for BUSINESS_UNAVAILABLE. Yelp's
+          // /businesses/search will surface businesses that /businesses/{id}
+          // refuses to serve (403 BUSINESS_UNAVAILABLE — typically venues with
+          // no reviews, like university dining halls). Inserting them puts a
+          // bare card in the feed until get-restaurants lazily tombstones it.
+          // Do the probe here once so unavailable venues never enter the feed,
+          // and tombstone any pre-existing sighting for the same yelp_id.
+          const detailRes = await pool.fetch(`https://api.yelp.com/v3/businesses/${hit.yelp_id}`);
+          const detailBodyStr = typeof detailRes.body === "string"
+            ? detailRes.body
+            : JSON.stringify(detailRes.body || {});
+          const isUnavailable = detailRes.status === 403 && detailBodyStr.includes("BUSINESS_UNAVAILABLE");
+          if (isUnavailable) {
             cityResult.skipped++;
-            console.log(`[db ${cand.city}] SKIP yelp_id=${hit.yelp_id} "${hit.yelp_name}" — zero-reviews (BUSINESS_UNAVAILABLE on detail fetch)`);
+            console.log(`[db ${cand.city}] SKIP yelp_id=${hit.yelp_id} "${hit.yelp_name}" — BUSINESS_UNAVAILABLE`);
+            // If we previously sighted this id, tombstone it so it stops
+            // appearing in the feed. Only stamps rows that aren't already tombstoned.
+            const { error: tombErr, data: tombData } = await supabase
+              .from("restaurant_sightings")
+              .update({ yelp_unavailable_at: new Date().toISOString() })
+              .eq("yelp_id", hit.yelp_id)
+              .is("yelp_unavailable_at", null)
+              .select("yelp_id");
+            if (tombErr) {
+              console.error(`[db ${cand.city}] tombstone failed yelp_id=${hit.yelp_id}: ${tombErr.message}`);
+            } else if (tombData && tombData.length > 0) {
+              console.log(`[db ${cand.city}] tombstoned existing sighting yelp_id=${hit.yelp_id}`);
+            }
+            continue;
+          }
+          if (!detailRes.ok) {
+            // Non-403 detail failure (rate limit, 5xx, network, all keys exhausted).
+            // Don't insert — we can't confirm availability. The next discovery run
+            // will retry. This keeps bad data out of the feed without permanently
+            // discarding the candidate.
+            cityResult.skipped++;
+            console.log(`[db ${cand.city}] SKIP yelp_id=${hit.yelp_id} "${hit.yelp_name}" — detail-probe-failed status=${detailRes.status}${detailRes.exhaustedAllKeys ? " (all keys exhausted)" : ""}`);
             continue;
           }
 
