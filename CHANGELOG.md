@@ -14,6 +14,11 @@ Categories used:
 
 ---
 
+## 2026-05-01
+
+### Changed
+- **Discovery skips zero-review Yelp businesses.** Yelp's `/businesses/{id}` endpoint returns `403 BUSINESS_UNAVAILABLE` for any business with no reviews (a deterministic policy), so those would briefly appear in the feed with broken metadata before being lazy-tombstoned by `get-restaurants`. `discover-new-restaurants` now skips them at insert time so they never enter the feed at all (e.g., university dining halls like "South Quad Dining Hall" in Ann Arbor).
+
 ## 2026-04-30 (later)
 
 ### Security

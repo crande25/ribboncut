@@ -529,6 +529,17 @@ Deno.serve(async (req) => {
           cityResult.verified++;
           const hit = verify.hit;
 
+          // Skip 0-review businesses entirely. Yelp's /businesses/{id} endpoint
+          // returns 403 BUSINESS_UNAVAILABLE for any business without reviews
+          // (deterministic policy), so they'd just appear once in the feed with
+          // broken metadata before being lazy-tombstoned by get-restaurants.
+          // Don't insert them in the first place.
+          if (hit.reviewCount === 0 || hit.reviewCount === null) {
+            cityResult.skipped++;
+            console.log(`[db ${cand.city}] SKIP yelp_id=${hit.yelp_id} "${hit.yelp_name}" — zero-reviews (BUSINESS_UNAVAILABLE on detail fetch)`);
+            continue;
+          }
+
           const { error: insertErr, data: inserted } = await supabase
             .from("restaurant_sightings")
             .upsert(
