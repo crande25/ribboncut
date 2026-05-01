@@ -59,7 +59,7 @@ function buildBody(count: number, cities: string[]): { title: string; body: stri
     cityNames.length === 2 ? `${cityNames[0]} & ${cityNames[1]}` :
     `${cityNames[0]}, ${cityNames[1]} +${cityNames.length - 2} more`;
   const title = count === 1 ? "1 new restaurant just opened" : `${count} new restaurants just opened`;
-  const body = `In ${cityText} — tap to see what's new`;
+  const body = `In ${cityText} — tap to see what's new!`;
   return { title, body };
 }
 
