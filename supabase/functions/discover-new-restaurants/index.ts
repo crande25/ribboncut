@@ -512,7 +512,7 @@ Deno.serve(async (req) => {
       // Initialize per-city result rows so cities with zero candidates still appear.
       const batchResults = new Map<string, typeof summary[number]>();
       for (const c of batch) {
-        batchResults.set(c, { city: c, candidates: 0, verified: 0, inserted: 0, skipped: 0 });
+        batchResults.set(c, { city: c, candidates: 0, verified: 0, inserted: 0, already_known: 0, skipped: 0 });
       }
 
       try {
