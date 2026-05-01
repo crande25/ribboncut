@@ -94,10 +94,19 @@ class YelpKeyPool {
       const key = this.nextAvailable();
       if (!key) return { ok: false, status: 0, rateLimited: true, authError: false, keyName: "(none)", exhaustedAllKeys: true };
       const res = await fetch(url, { headers: { Authorization: `Bearer ${key.value}`, Accept: "application/json" } });
-      if (res.status === 401 || res.status === 403) {
+      if (res.status === 401) {
         const body = await res.text();
         await this.markExhausted(key.name, res.status, body);
         continue;
+      }
+      if (res.status === 403) {
+        const body = await res.text();
+        const isKeyProblem = /TOKEN_INVALID|TOKEN_MISSING|TOKEN_REVOKED|UNAUTHORIZED|FORBIDDEN_CLIENT/i.test(body);
+        if (isKeyProblem) {
+          await this.markExhausted(key.name, res.status, body);
+          continue;
+        }
+        return { ok: false, status: 403, body, rateLimited: false, authError: false, keyName: key.name };
       }
       if (res.status === 429) {
         const body = await res.text();
