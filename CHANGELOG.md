@@ -14,6 +14,13 @@ Categories used:
 
 ---
 
+## 2026-05-01 (b)
+
+### Fixed
+- **Discovery prompt now targets newly opened restaurants only.** The Gemini prompt previously asked for restaurants "active in any capacity," which caused established chains (e.g. Applebee's in Southfield) to be reported as new discoveries. Prompt now explicitly requires the restaurant to have first opened within the 7-day lookback window and excludes long-established locations, rebrandings, and chains.
+
+---
+
 ## 2026-05-01
 
 ### Changed
