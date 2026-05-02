@@ -13,6 +13,16 @@ Categories used:
 - **Dependencies** — non-security dependency updates
 
 ---
+## 2026-05-02
+
+### Changed
+- Yelp API key tracking switched from daily to **monthly** quota (3,000 requests/key/month).
+- Keys auto-reset to 3,000 remaining on the 1st of each month (UTC).
+- `remaining_uses` column added to `api_key_status`; decremented on every Yelp request.
+- Keys proactively marked exhausted when remaining hits 0 (no longer waits for 429).
+- Admin API Key Health panel shows monthly remaining with color-coded warnings.
+
+---
 
 ## 2026-05-01 (f)
 
