@@ -1,52 +1,60 @@
 
-## Changes
+## Monthly Yelp API Key Usage Tracking
 
-### 1. Strip signup from AdminLogin
-- Remove the `onSignUp` prop and signup mode toggle from `AdminLogin.tsx`
-- The form becomes sign-in only — no way for new users to self-register through `/admin`
-- Remove `signUp` usage from `Admin.tsx`
+### What changes
 
-### 2. Add "Users" tab to admin dashboard
-- Add a new tab called **Users** to the dashboard
-- New component `src/components/admin/UserManagement.tsx`:
-  - Lists current admins (queries `user_roles` joined with `profiles`)
-  - **Grant admin** form: enter an email, look up their `user_id` in `profiles`, insert into `user_roles`
-  - **Revoke admin** button next to each admin (except yourself)
-- This requires the authenticated admin to be able to insert/delete from `user_roles`, so we need an RLS policy update
+**1. Database migration** — add `remaining_uses` column to `api_key_status`
+- New column `remaining_uses INTEGER DEFAULT 3000`
+- Initialize all existing rows to 3000
 
-### 3. Database migration
-- Add RLS policies on `user_roles` so that admins can **insert** and **delete** roles (using the existing `has_role()` function)
-- Add an RLS policy on `profiles` so admins can **read all profiles** (needed to look up a user by email when granting admin)
+**2. `nextYelpReset()` → `nextMonthlyReset()`** in `yelpKeyPool.ts`
+- Change from "next midnight Pacific" to "1st of next month, midnight UTC"
+- Used when marking a key exhausted so `reset_at` points to the month boundary
+
+**3. Decrement `remaining_uses` on every successful fetch** in `yelpKeyPool.ts`
+- After a 200 response, decrement the key's `remaining_uses` by 1
+- When `remaining_uses` hits 0, proactively mark the key exhausted (don't wait for 429)
+
+**4. On exhaustion (429/401), set `remaining_uses = 0`** in `yelpKeyPool.ts`
+- When `markExhausted` is called, also set remaining to 0
+
+**5. On load, auto-reset keys past their `reset_at`**  in `yelpKeyPool.ts`
+- If `reset_at` is in the past, clear exhaustion and reset `remaining_uses` to 3000
+
+**6. Update `yelp-key-sanity-check`** edge function
+- Read `remaining_uses` from DB and include in response
+- Fix reset calculation to monthly
+- Return `remaining_uses` alongside the existing health data
+
+**7. Update `ApiKeyHealth.tsx`** admin component
+- Show "Monthly Uses Remaining" column instead of the Yelp daily headers
+- Display `remaining / 3000` per key
+
+**8. Update comments** throughout to say "monthly" instead of "daily"
 
 ### Technical details
 
-**New RLS policies:**
+**Migration SQL:**
 ```sql
--- Admins can grant roles
-CREATE POLICY "Admins can insert roles"
-  ON public.user_roles FOR INSERT
-  TO authenticated
-  WITH CHECK (public.has_role(auth.uid(), 'admin'));
+ALTER TABLE public.api_key_status
+  ADD COLUMN remaining_uses INTEGER NOT NULL DEFAULT 3000;
 
--- Admins can revoke roles
-CREATE POLICY "Admins can delete roles"
-  ON public.user_roles FOR DELETE
-  TO authenticated
-  USING (public.has_role(auth.uid(), 'admin'));
-
--- Admins can read all profiles (for email lookup)
-CREATE POLICY "Admins can read all profiles"
-  ON public.profiles FOR SELECT
-  TO authenticated
-  USING (public.has_role(auth.uid(), 'admin'));
+UPDATE public.api_key_status SET remaining_uses = 3000;
 ```
 
-**New admin must already have a Supabase auth account** (signed up elsewhere or created by you manually). The grant flow is: existing admin enters email → system looks up profile → inserts admin role.
+**Monthly reset function:**
+```typescript
+function nextMonthlyReset(): Date {
+  const now = new Date();
+  const year = now.getUTCMonth() === 11 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+  const month = (now.getUTCMonth() + 1) % 12;
+  return new Date(Date.UTC(year, month, 1, 0, 0, 0));
+}
+```
 
-**Files changed:**
-- `src/components/admin/AdminLogin.tsx` — remove signup
-- `src/pages/Admin.tsx` — remove signUp prop, add Users tab
-- `src/components/admin/UserManagement.tsx` — new component
-- `src/hooks/useAdminAuth.ts` — can remove `signUp` export
-- Migration SQL — new RLS policies
+**Files touched:**
+- `supabase/functions/_shared/yelpKeyPool.ts` — monthly reset, decrement on use, reset on load
+- `supabase/functions/yelp-key-sanity-check/index.ts` — include remaining_uses in response
+- `src/components/admin/ApiKeyHealth.tsx` — show monthly remaining
+- New migration for `remaining_uses` column
 - `CHANGELOG.md`
