@@ -8,37 +8,39 @@ export function useAdminAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        const u = session?.user ?? null;
-        setUser(u);
-        if (u) {
-          const { data } = await supabase.rpc("has_role", {
-            _user_id: u.id,
-            _role: "admin",
-          });
-          setIsAdmin(!!data);
-        } else {
-          setIsAdmin(false);
-        }
-        setLoading(false);
-      }
-    );
+    let mounted = true;
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      const u = session?.user ?? null;
-      setUser(u);
-      if (u) {
+    const checkRole = async (u: User | null) => {
+      if (!u) {
+        if (mounted) { setUser(null); setIsAdmin(false); setLoading(false); }
+        return;
+      }
+      if (mounted) setUser(u);
+      try {
         const { data } = await supabase.rpc("has_role", {
           _user_id: u.id,
           _role: "admin",
         });
-        setIsAdmin(!!data);
+        if (mounted) setIsAdmin(!!data);
+      } catch {
+        if (mounted) setIsAdmin(false);
       }
-      setLoading(false);
+      if (mounted) setLoading(false);
+    };
+
+    // Initial session check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      checkRole(session?.user ?? null);
     });
 
-    return () => subscription.unsubscribe();
+    // Listen for future changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        checkRole(session?.user ?? null);
+      }
+    );
+
+    return () => { mounted = false; subscription.unsubscribe(); };
   }, []);
 
   const signIn = async (email: string, password: string) => {
