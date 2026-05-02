@@ -22,6 +22,7 @@ export type Database = {
           last_error: string | null
           last_status: number | null
           provider: string
+          remaining_uses: number
           reset_at: string | null
           updated_at: string
         }
@@ -32,6 +33,7 @@ export type Database = {
           last_error?: string | null
           last_status?: number | null
           provider: string
+          remaining_uses?: number
           reset_at?: string | null
           updated_at?: string
         }
@@ -42,6 +44,7 @@ export type Database = {
           last_error?: string | null
           last_status?: number | null
           provider?: string
+          remaining_uses?: number
           reset_at?: string | null
           updated_at?: string
         }
