@@ -13,6 +13,19 @@ Categories used:
 - **Dependencies** — non-security dependency updates
 
 ---
+## 2026-05-04
+
+### Added
+- JSON-LD structured data (Schema.org WebApplication) for AI/GEO discoverability
+- `sitemap.xml` for search engine indexing
+- Canonical URL and `og:url` meta tag pointing to `www.ribbon-cut.com`
+- AI crawler allowances in `robots.txt` (GPTBot, ClaudeBot, PerplexityBot, etc.)
+
+### Changed
+- Improved meta description with SE Michigan focus and long-tail keywords
+- Updated `robots.txt` with Sitemap directive
+
+---
 ## 2026-05-02
 
 ### Changed
