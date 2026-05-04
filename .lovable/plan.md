@@ -1,60 +1,45 @@
 
-## Monthly Yelp API Key Usage Tracking
+# Increase RibbonCut Discoverability
 
-### What changes
+## What we can do in-app (code changes)
 
-**1. Database migration** — add `remaining_uses` column to `api_key_status`
-- New column `remaining_uses INTEGER DEFAULT 3000`
-- Initialize all existing rows to 3000
+### 1. Add JSON-LD Structured Data (GEO/AI optimization)
+Add a `<script type="application/ld+json">` block to `index.html` with Schema.org `WebApplication` markup:
+- Name, description, URL, author, applicationCategory ("FoodService"), operatingSystem ("Web")
+- `areaServed`: SE Michigan
+- This helps AI search engines and Google understand what the site is
 
-**2. `nextYelpReset()` → `nextMonthlyReset()`** in `yelpKeyPool.ts`
-- Change from "next midnight Pacific" to "1st of next month, midnight UTC"
-- Used when marking a key exhausted so `reset_at` points to the month boundary
+### 2. Add a sitemap.xml
+Create `public/sitemap.xml` with the main routes (`/`, `/settings`) pointing to `https://www.ribbon-cut.com`. This can be submitted to Google Search Console.
 
-**3. Decrement `remaining_uses` on every successful fetch** in `yelpKeyPool.ts`
-- After a 200 response, decrement the key's `remaining_uses` by 1
-- When `remaining_uses` hits 0, proactively mark the key exhausted (don't wait for 429)
+### 3. Update robots.txt
+- Add `Sitemap: https://www.ribbon-cut.com/sitemap.xml`
+- Add allowances for AI crawlers (GPTBot, Google-Extended, etc.)
 
-**4. On exhaustion (429/401), set `remaining_uses = 0`** in `yelpKeyPool.ts`
-- When `markExhausted` is called, also set remaining to 0
+### 4. Add canonical URL
+Add `<link rel="canonical" href="https://www.ribbon-cut.com/" />` to `index.html` so search engines consolidate ranking signals to the custom domain.
 
-**5. On load, auto-reset keys past their `reset_at`**  in `yelpKeyPool.ts`
-- If `reset_at` is in the past, clear exhaustion and reset `remaining_uses` to 3000
+### 5. Add og:url meta tag
+Add `<meta property="og:url" content="https://www.ribbon-cut.com/" />` for proper social sharing.
 
-**6. Update `yelp-key-sanity-check`** edge function
-- Read `remaining_uses` from DB and include in response
-- Fix reset calculation to monthly
-- Return `remaining_uses` alongside the existing health data
+## What requires manual action (not code)
 
-**7. Update `ApiKeyHealth.tsx`** admin component
-- Show "Monthly Uses Remaining" column instead of the Yelp daily headers
-- Display `remaining / 3000` per key
+These are things you'd do outside the codebase:
 
-**8. Update comments** throughout to say "monthly" instead of "daily"
+- **Google Search Console**: Register `ribbon-cut.com`, submit the sitemap
+- **Bing Webmaster Tools**: Same as above
+- **Community posts**: Share on Reddit (r/Detroit, r/AnnArbor, r/Michigan, r/foodie), Product Hunt, etc.
+- **Backlinks**: Guest posts, local food blogs, local news sites
+- **Social media**: Create short demo videos for TikTok/Instagram Reels showing the app in action
+- **Pinterest**: Pin restaurant photos with links back to the site
 
-### Technical details
+## Technical Details
 
-**Migration SQL:**
-```sql
-ALTER TABLE public.api_key_status
-  ADD COLUMN remaining_uses INTEGER NOT NULL DEFAULT 3000;
+**Files to create:**
+- `public/sitemap.xml`
 
-UPDATE public.api_key_status SET remaining_uses = 3000;
-```
+**Files to edit:**
+- `index.html` — add JSON-LD structured data block, canonical link, og:url
+- `public/robots.txt` — add Sitemap directive and AI bot allowances
 
-**Monthly reset function:**
-```typescript
-function nextMonthlyReset(): Date {
-  const now = new Date();
-  const year = now.getUTCMonth() === 11 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
-  const month = (now.getUTCMonth() + 1) % 12;
-  return new Date(Date.UTC(year, month, 1, 0, 0, 0));
-}
-```
-
-**Files touched:**
-- `supabase/functions/_shared/yelpKeyPool.ts` — monthly reset, decrement on use, reset on load
-- `supabase/functions/yelp-key-sanity-check/index.ts` — include remaining_uses in response
-- `src/components/admin/ApiKeyHealth.tsx` — show monthly remaining
-- New migration for `remaining_uses` column
-- `CHANGELOG.md`
+No database changes needed.
