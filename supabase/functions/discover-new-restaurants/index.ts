@@ -112,7 +112,7 @@ async function callGeminiGrounded(
 Include soft openings, grand openings, and preview/trial service periods — but ONLY if the restaurant started serving customers for the first time within this date range.
 
 EXCLUDE all of the following:
-- Established restaurants that have been open for months or years (e.g. chain restaurants like Applebee's, Chili's, McDonald's, etc. that have long existed at their current location)
+- Established restaurants that have been open for months or years
 - Restaurants that merely renovated, rebranded, or changed ownership but were already operating at that address
 - Pop-ups, food trucks without a permanent address, planned/announced openings not yet serving customers, and locations that have already closed
 - Any restaurant you cannot confirm opened within the last 7 days from a credible source
