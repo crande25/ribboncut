@@ -179,6 +179,21 @@ export type Database = {
         }
         Relationships: []
       }
+      keepalive: {
+        Row: {
+          id: number
+          pinged_at: string
+        }
+        Insert: {
+          id?: number
+          pinged_at?: string
+        }
+        Update: {
+          id?: number
+          pinged_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
