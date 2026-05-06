@@ -1,45 +1,47 @@
+## Context
 
-# Increase RibbonCut Discoverability
+Supabase pauses free-tier projects after 7 days of **database inactivity** (not API calls or dashboard visits). Your existing cron jobs trigger edge functions via HTTP, but those only write to the DB when they find new restaurants or have emails to process — meaning the DB can go days without actual write activity.
 
-## What we can do in-app (code changes)
+The most reliable prevention is a cron job that performs an actual database write on a regular schedule.
 
-### 1. Add JSON-LD Structured Data (GEO/AI optimization)
-Add a `<script type="application/ld+json">` block to `index.html` with Schema.org `WebApplication` markup:
-- Name, description, URL, author, applicationCategory ("FoodService"), operatingSystem ("Web")
-- `areaServed`: SE Michigan
-- This helps AI search engines and Google understand what the site is
+## What this changes
 
-### 2. Add a sitemap.xml
-Create `public/sitemap.xml` with the main routes (`/`, `/settings`) pointing to `https://www.ribbon-cut.com`. This can be submitted to Google Search Console.
+### 1. Create a `keepalive` table (migration)
 
-### 3. Update robots.txt
-- Add `Sitemap: https://www.ribbon-cut.com/sitemap.xml`
-- Add allowances for AI crawlers (GPTBot, Google-Extended, etc.)
+A minimal single-row table:
 
-### 4. Add canonical URL
-Add `<link rel="canonical" href="https://www.ribbon-cut.com/" />` to `index.html` so search engines consolidate ranking signals to the custom domain.
+```sql
+CREATE TABLE public.keepalive (
+  id integer PRIMARY KEY DEFAULT 1,
+  pinged_at timestamptz NOT NULL DEFAULT now()
+);
 
-### 5. Add og:url meta tag
-Add `<meta property="og:url" content="https://www.ribbon-cut.com/" />` for proper social sharing.
+ALTER TABLE public.keepalive ENABLE ROW LEVEL SECURITY;
 
-## What requires manual action (not code)
+-- No client access needed; only pg_cron writes to this
+CREATE POLICY "no client access" ON public.keepalive
+  FOR ALL TO public USING (false) WITH CHECK (false);
 
-These are things you'd do outside the codebase:
+-- Seed the single row
+INSERT INTO public.keepalive (id, pinged_at) VALUES (1, now());
+```
 
-- **Google Search Console**: Register `ribbon-cut.com`, submit the sitemap
-- **Bing Webmaster Tools**: Same as above
-- **Community posts**: Share on Reddit (r/Detroit, r/AnnArbor, r/Michigan, r/foodie), Product Hunt, etc.
-- **Backlinks**: Guest posts, local food blogs, local news sites
-- **Social media**: Create short demo videos for TikTok/Instagram Reels showing the app in action
-- **Pinterest**: Pin restaurant photos with links back to the site
+### 2. Add a pg_cron job that writes daily
 
-## Technical Details
+```sql
+SELECT cron.schedule(
+  'keepalive-daily',
+  '0 6 * * *',
+  $$UPDATE public.keepalive SET pinged_at = now() WHERE id = 1$$
+);
+```
 
-**Files to create:**
-- `public/sitemap.xml`
+This runs a real `UPDATE` every day at 06:00 UTC, which registers as database activity and resets the inactivity timer. No edge functions, no HTTP calls, no tokens — just a direct SQL write from pg_cron.
 
-**Files to edit:**
-- `index.html` — add JSON-LD structured data block, canonical link, og:url
-- `public/robots.txt` — add Sitemap directive and AI bot allowances
+### 3. Update CHANGELOG.md
 
-No database changes needed.
+Append a dated entry for this change.
+
+---
+
+**No code changes needed** — this is entirely database-side (one migration + one cron schedule insert).
