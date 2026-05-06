@@ -13,6 +13,12 @@ Categories used:
 - **Dependencies** — non-security dependency updates
 
 ---
+## 2026-05-06
+
+### Added
+- Daily keepalive cron job (`keepalive-daily`) — writes to a `keepalive` table at 06:00 UTC to prevent backend pausing due to inactivity
+
+---
 ## 2026-05-04
 
 ### Added
